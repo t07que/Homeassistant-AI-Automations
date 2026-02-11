@@ -16,7 +16,7 @@ import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Query, Body, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 from pydantic import BaseModel
 from pathlib import Path
 import datetime
@@ -121,16 +121,15 @@ def _ingress_base_path(request: Request) -> str:
 
 @app.get("/", include_in_schema=False)
 def root(request: Request):
+    index_path = STATIC_PATH / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
     base = _ingress_base_path(request)
     if base:
-        return RedirectResponse(url=f"{base}/ui/")
-    # Use a relative redirect so ingress prefixes are preserved.
-    return RedirectResponse(url="ui/")
+        return RedirectResponse(url=f"{base}/static/")
+    return RedirectResponse(url="static/")
 
-# Mount UI
-app.mount("/ui", StaticFiles(directory=str(STATIC_PATH), html=True), name="ui")
-
-# Optional: direct file access for testing
+# Static assets
 app.mount("/static", StaticFiles(directory=str(STATIC_PATH), html=False), name="static")
 
 
