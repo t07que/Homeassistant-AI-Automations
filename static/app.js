@@ -73,7 +73,7 @@ const state = {
 
 // Temporary safety switches for remote access issues.
 const DISABLE_HEALTH_PANEL = true;
-const DISABLE_SEMANTIC_DIFF = true;
+const DISABLE_SEMANTIC_DIFF = false;
 
 const SEARCH_DEBOUNCE_MS = 350;
 let debouncedLoadList = null;
@@ -109,6 +109,7 @@ const DEFAULT_LAYOUT = {
 };
 let layout = loadLayout();
 let _activeResizeSection = null;
+let _resizeDrag = null;
 
 function log(msg) {
   const box = $("logBox");
@@ -190,7 +191,15 @@ function appendAgentStatus(out, targetAppend, statusId, label = "Helpers") {
     targetAppend(`${label} status: ${msg}`, "system");
   }
   if (statusId) {
-    setStatus(statusId, "architect", `${label} status: ${msg}`);
+    const hasSummary = list.some((item) => item?.name === "summary");
+    const hasKb = list.some((item) => item?.name === "kb_sync_helper");
+    if (hasSummary) {
+      setStatus(statusId, "summary", agentStatusText("summary", "summarizing..."));
+    } else if (hasKb) {
+      setStatus(statusId, "kb", agentStatusText("kb_sync_helper", "updating..."));
+    } else {
+      setStatus(statusId, "architect", `${label} status: ${msg}`);
+    }
   }
 }
 
@@ -493,6 +502,8 @@ async function appendConversationHistory(entityId, entityType, conversationId, m
   }
 }
 
+const STATUS_CLASS_LIST = ["architect", "builder", "handoff", "kb", "summary"];
+
 function setStatus(targetId, type, text) {
   const ids = [targetId];
   if (targetId === "aiStatus" && $("aiStatusExpanded")) ids.push("aiStatusExpanded");
@@ -501,8 +512,8 @@ function setStatus(targetId, type, text) {
     const box = $(id);
     if (!box) return;
     box.classList.add("active");
-    box.classList.toggle("builder", type === "builder");
-    box.classList.toggle("architect", type === "architect");
+    STATUS_CLASS_LIST.forEach((cls) => box.classList.remove(cls));
+    if (type) box.classList.add(type);
     const icon = box.querySelector(".ai-status-icon");
     if (icon) {
       icon.className = "ai-status-icon";
@@ -520,7 +531,8 @@ function clearStatus(targetId) {
   ids.forEach((id) => {
     const box = $(id);
     if (!box) return;
-    box.classList.remove("active", "builder", "architect");
+    box.classList.remove("active");
+    STATUS_CLASS_LIST.forEach((cls) => box.classList.remove(cls));
     const label = box.querySelector(".ai-status-text");
     if (label) label.textContent = "";
   });
@@ -539,11 +551,19 @@ function agentStatusText(key, actionText, fallbackLabel) {
   const labelMap = {
     architect: "Architect",
     builder: "Builder",
-    kb_sync_helper: "Knowledgebase agent",
+    kb_sync_helper: "Knowledgebase",
+    summary: "Editor",
   };
   const label = fallbackLabel || labelMap[key] || "Agent";
   const id = getAgentId(key);
   return id ? `${label} (${id}) ${actionText}` : `${label} ${actionText}`;
+}
+
+function startBuilderHandoff(statusId) {
+  setStatus(statusId, "handoff", agentStatusText("architect", "handing over to Builder..."));
+  return setTimeout(() => {
+    setStatus(statusId, "builder", agentStatusText("builder", "building..."));
+  }, 650);
 }
 
 function normalizeAgentList(out) {
@@ -1301,7 +1321,7 @@ async function runKbSync() {
   if (runBtn) runBtn.disabled = true;
   const promptText = ($("kbSyncPrompt")?.value || "").trim();
   try {
-    setStatus("kbSyncStatus", "architect", agentStatusText("kb_sync_helper", "is thinking..."));
+    setStatus("kbSyncStatus", "kb", agentStatusText("kb_sync_helper", "updating..."));
     if (promptText) {
       kbSyncOutputAppend(promptText, "user");
     }
@@ -1357,7 +1377,7 @@ async function runKbSave() {
   const saveBtn = $("kbSyncSaveBtn");
   if (saveBtn) saveBtn.disabled = true;
   try {
-    setStatus("kbSyncStatus", "architect", agentStatusText("kb_sync_helper", "is preparing an update..."));
+    setStatus("kbSyncStatus", "kb", agentStatusText("kb_sync_helper", "preparing update..."));
     const previewOut = await api("/api/capabilities/learn", {
       method: "POST",
       body: JSON.stringify({
@@ -1655,13 +1675,45 @@ function setupResizableSections() {
       const nearRight = rect.right - e.clientX < edge;
       if ((hasY && nearBottom) || (hasX && nearRight)) {
         _activeResizeSection = el;
+        _resizeDrag = {
+          el,
+          axis,
+          hasX,
+          hasY,
+          startX: e.clientX,
+          startY: e.clientY,
+          startW: rect.width,
+          startH: rect.height,
+          minW: getMinSize(el, "x"),
+          minH: getMinSize(el, "y"),
+        };
+        document.body.style.cursor = hasY && !hasX ? "ns-resize" : hasX && !hasY ? "ew-resize" : "nwse-resize";
+        e.preventDefault();
       }
     });
+  });
+  window.addEventListener("pointermove", (e) => {
+    if (!_resizeDrag) return;
+    const { el, hasX, hasY, startX, startY, startW, startH, minW, minH } = _resizeDrag;
+    if (!el) return;
+    if (hasY) {
+      const nextH = Math.max(minH || 80, startH + (e.clientY - startY));
+      el.style.height = `${Math.round(nextH)}px`;
+      el.style.flex = "0 0 auto";
+    }
+    if (hasX) {
+      const nextW = Math.max(minW || 120, startW + (e.clientX - startX));
+      el.style.width = `${Math.round(nextW)}px`;
+      el.style.flex = "0 0 auto";
+    }
+    scheduleLayoutSync();
   });
   window.addEventListener("pointerup", () => {
     if (!_activeResizeSection) return;
     persistSectionSize(_activeResizeSection);
     _activeResizeSection = null;
+    _resizeDrag = null;
+    document.body.style.cursor = "";
   });
 }
 
@@ -1799,6 +1851,17 @@ function updateAutomationPanels() {
   if (scenarioCard) scenarioCard.hidden = !show;
   renderHealthPanel();
   renderScenarioOutput();
+}
+
+function getMinSize(el, axis) {
+  if (!el) return 0;
+  const styles = getComputedStyle(el);
+  if (axis === "x") {
+    const w = parseFloat(styles.minWidth || "0");
+    return Number.isFinite(w) ? w : 0;
+  }
+  const h = parseFloat(styles.minHeight || "0");
+  return Number.isFinite(h) ? h : 0;
 }
 
 function updateEntityUi() {
@@ -2305,8 +2368,22 @@ function renderVersions() {
     list.appendChild(div);
   }
 
+  autoSizeVersionsCard();
   setVersionButtons(Boolean(state.selectedVersionId));
   updateCompareTabs();
+}
+
+function autoSizeVersionsCard() {
+  const card = document.querySelector('.card[data-card="versions"]');
+  if (!card) return;
+  if (layout?.sizes?.versions?.height) return;
+  const count = Math.max(0, state.versions.length || 0);
+  const base = 240;
+  const per = 44;
+  const max = 640;
+  const desired = Math.min(max, base + Math.min(count, 8) * per);
+  card.style.height = `${desired}px`;
+  card.style.flex = "0 0 auto";
 }
 
 async function fetchVersionYaml(versionId) {
@@ -2732,40 +2809,34 @@ function lcsLength(aLines, bLines) {
   return dp[bLen];
 }
 
-function buildDiffStats(baseText, nextText) {
-  const baseLines = toLineArray(baseText);
-  const nextLines = toLineArray(nextText);
-  if (typeof Diff !== "undefined" && Diff.diffLines) {
-    const diff = Diff.diffLines(baseText || "", nextText || "");
-    let added = 0;
-    let removed = 0;
-    diff.forEach((part) => {
-      const count = countLines(part.value);
-      if (part.added) added += count;
-      if (part.removed) removed += count;
-    });
-    if (added || removed) return { added, removed };
-  }
-  const lcs = lcsLength(baseLines, nextLines);
-  let added = Math.max(0, nextLines.length - lcs);
-  let removed = Math.max(0, baseLines.length - lcs);
-  if (!added && !removed && (baseText || "") !== (nextText || "")) {
-    const max = Math.max(baseLines.length, nextLines.length);
-    for (let i = 0; i < max; i++) {
-      const baseLine = baseLines[i];
-      const nextLine = nextLines[i];
-      if (baseLine === nextLine) continue;
-      if (baseLine === undefined) {
-        added += 1;
-      } else if (nextLine === undefined) {
-        removed += 1;
-      } else {
-        added += 1;
-        removed += 1;
-      }
-    }
-  }
+function diffLineCounts(baseText, nextText) {
+  const baseCounts = new Map();
+  const nextCounts = new Map();
+  toLineArray(baseText).forEach((line) => {
+    const key = line.trim();
+    if (!key) return;
+    baseCounts.set(key, (baseCounts.get(key) || 0) + 1);
+  });
+  toLineArray(nextText).forEach((line) => {
+    const key = line.trim();
+    if (!key) return;
+    nextCounts.set(key, (nextCounts.get(key) || 0) + 1);
+  });
+  let added = 0;
+  let removed = 0;
+  nextCounts.forEach((count, line) => {
+    const diff = count - (baseCounts.get(line) || 0);
+    if (diff > 0) added += diff;
+  });
+  baseCounts.forEach((count, line) => {
+    const diff = count - (nextCounts.get(line) || 0);
+    if (diff > 0) removed += diff;
+  });
   return { added, removed };
+}
+
+function buildDiffStats(baseText, nextText) {
+  return diffLineCounts(baseText || "", nextText || "");
 }
 
 function buildChangeSummary(baseText, nextText) {
@@ -3585,7 +3656,7 @@ async function runCreateFromPrompt() {
   }
 
   try {
-    setStatus("createStatus", "architect", agentStatusText("architect", "is thinking..."));
+    setStatus("createStatus", "architect", agentStatusText("architect", "thinking..."));
     toast("Asking Architect...", 2500);
     createOutputAppend(text, "user");
     createOutputAppend("Sending to Architect...", "system");
@@ -3658,6 +3729,7 @@ async function createArchitectFinalize() {
   if (!state.createArchitectConversationId && !$("promptText").value.trim()) {
     return toast("Write a prompt first.");
   }
+  let handoffTimer = null;
   const ok = await openConfirmModal({
     title: "Finalize and build",
     subtitle: "Send the Architect plan to the Builder.",
@@ -3673,8 +3745,8 @@ async function createArchitectFinalize() {
       $("promptText").value = "";
     }
 
-    setStatus("createStatus", "builder", agentStatusText("builder", "is working..."));
-    toast("Sending to builder...", 2500);
+    handoffTimer = startBuilderHandoff("createStatus");
+    toast("Handing off to Builder...", 2500);
 
     const out = await api(`/api/architect/finalize`, {
       method: "POST",
@@ -3727,6 +3799,7 @@ async function createArchitectFinalize() {
     log(`Architect finalize failed: ${e.message || e}`);
     createOutputAppend(`Error: ${e.message || e}`, "error");
   } finally {
+    if (handoffTimer) clearTimeout(handoffTimer);
     clearStatus("createStatus");
     updateCreateFinalizeState();
   }
@@ -3878,9 +3951,10 @@ async function aiImprove() {
 async function createNewFromAiPrompt() {
   const prompt = $("aiPrompt").value.trim();
   if (!prompt) return toast("Write a prompt first.");
+  let handoffTimer = null;
 
   try {
-    setStatus("aiStatus", "architect", agentStatusText("architect", "is thinking..."));
+    setStatus("aiStatus", "architect", agentStatusText("architect", "thinking..."));
     toast("Asking Architect...", 2500);
     aiOutputAppend(prompt, "user");
     aiOutputAppend("Sending to Architect...", "system");
@@ -3913,8 +3987,8 @@ async function createNewFromAiPrompt() {
     });
     if (!ok) return;
 
-    setStatus("aiStatus", "builder", agentStatusText("builder", "is working..."));
-    aiOutputAppend("Sending final prompt to builder...", "system");
+    handoffTimer = startBuilderHandoff("aiStatus");
+    aiOutputAppend("Handing off to Builder...", "system");
     const out = await api(`/api/architect/finalize`, {
       method: "POST",
       body: JSON.stringify({
@@ -3949,6 +4023,7 @@ async function createNewFromAiPrompt() {
     log(`Create from AI failed: ${e.message || e}`);
     aiOutputAppend(`Error: ${e.message || e}`, "error");
   } finally {
+    if (handoffTimer) clearTimeout(handoffTimer);
     clearStatus("aiStatus");
   }
 }
@@ -3970,7 +4045,7 @@ async function aiArchitectChat() {
   }
 
   try {
-    setStatus("aiStatus", "architect", agentStatusText("architect", "is thinking..."));
+    setStatus("aiStatus", "architect", agentStatusText("architect", "thinking..."));
     aiOutputAppend(prompt, "user");
     aiOutputAppend("Sending to Architect...", "system");
     pushAiHistory("user", prompt);
@@ -4023,6 +4098,7 @@ async function aiArchitectFinalize(options = {}) {
   const mode = state.activeId ? "edit" : "create";
   const prompt = $("aiPrompt")?.value?.trim() || "";
   const historyStart = state.aiHistory.length;
+  let handoffTimer = null;
 
   if (forcePrompt && !prompt) {
     return toast("Write a prompt first.");
@@ -4053,8 +4129,8 @@ async function aiArchitectFinalize(options = {}) {
       clearAiPrompts();
     }
 
-    setStatus("aiStatus", "builder", agentStatusText("builder", "is working..."));
-    toast("Sending to builder...", 2500);
+    handoffTimer = startBuilderHandoff("aiStatus");
+    toast("Handing off to Builder...", 2500);
 
     const body = {
       conversation_id: state.architectConversationId,
@@ -4133,6 +4209,7 @@ async function aiArchitectFinalize(options = {}) {
     log(`Architect finalize failed: ${e.message || e}`);
     aiOutputAppend(`Error: ${e.message || e}`, "error");
   } finally {
+    if (handoffTimer) clearTimeout(handoffTimer);
     clearStatus("aiStatus");
     updateArchitectActionState();
   }

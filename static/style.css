@@ -625,11 +625,26 @@ body.ai-collapsed .row-splitter{
   overflow:hidden;
 }
 .resizable-section{
-  resize: vertical;
+  resize: none;
   overflow: hidden;
   min-height:140px;
   max-height: 100%;
+  position: relative;
 }
+.resizable-section::after{
+  content:"";
+  position:absolute;
+  left:12px;
+  right:12px;
+  bottom:6px;
+  height:4px;
+  border-radius:999px;
+  background: rgba(255,255,255,.08);
+  opacity:0;
+  pointer-events:none;
+  transition: opacity .2s ease;
+}
+.resizable-section:hover::after{opacity:.6}
 .resizable-section[data-size-axis="x"]{
   resize: horizontal;
 }
@@ -1259,6 +1274,72 @@ code{
 .ai-loading.architect .ai-loading-icon{
   animation: pencilMove 1.2s ease-in-out infinite;
 }
+.ai-status.handoff .ai-status-icon{
+  animation: handoffSlide 1.1s ease-in-out infinite;
+}
+.ai-status.handoff .ai-status-icon::before{
+  content:"";
+  position:absolute;
+  height:2px;
+  background:#8fb3ff;
+  left:2px;
+  right:6px;
+  top:8px;
+  border-radius:2px;
+}
+.ai-status.handoff .ai-status-icon::after{
+  content:"";
+  position:absolute;
+  top:5px;
+  right:2px;
+  border-top:4px solid transparent;
+  border-bottom:4px solid transparent;
+  border-left:6px solid #8fb3ff;
+}
+.ai-status.kb .ai-status-icon{
+  animation: kbPulse 1.2s ease-in-out infinite;
+}
+.ai-status.kb .ai-status-icon::before{
+  content:"";
+  position:absolute;
+  width:6px;
+  height:12px;
+  background:#7bd88f;
+  border-radius:2px;
+  left:3px;
+  top:3px;
+}
+.ai-status.kb .ai-status-icon::after{
+  content:"";
+  position:absolute;
+  width:6px;
+  height:12px;
+  background:#5fbf76;
+  border-radius:2px;
+  left:9px;
+  top:3px;
+}
+.ai-status.summary .ai-status-icon{
+  animation: summaryPulse 1.4s ease-in-out infinite;
+}
+.ai-status.summary .ai-status-icon::before{
+  content:"";
+  position:absolute;
+  inset:3px 4px;
+  border:1px solid #f2c94c;
+  border-radius:2px;
+}
+.ai-status.summary .ai-status-icon::after{
+  content:"";
+  position:absolute;
+  left:6px;
+  top:6px;
+  width:10px;
+  height:2px;
+  background:#f2c94c;
+  box-shadow:0 4px 0 #f2c94c, 0 8px 0 #f2c94c;
+  animation: summaryScan 1.1s ease-in-out infinite;
+}
 .ai-loading{
   position:absolute;
   right:10px;
@@ -1295,6 +1376,26 @@ code{
   0%{transform:translateX(0)}
   50%{transform:translateX(3px)}
   100%{transform:translateX(0)}
+}
+@keyframes handoffSlide{
+  0%{transform:translateX(0)}
+  50%{transform:translateX(3px)}
+  100%{transform:translateX(0)}
+}
+@keyframes kbPulse{
+  0%{transform:scale(1); opacity:.7}
+  50%{transform:scale(1.05); opacity:1}
+  100%{transform:scale(1); opacity:.7}
+}
+@keyframes summaryPulse{
+  0%{transform:scale(1); opacity:.7}
+  50%{transform:scale(1.04); opacity:1}
+  100%{transform:scale(1); opacity:.7}
+}
+@keyframes summaryScan{
+  0%{opacity:.4}
+  50%{opacity:1}
+  100%{opacity:.4}
 }
 .ai-output:empty::before{
   content:"No AI output yet.";
