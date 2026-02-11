@@ -71,6 +71,10 @@ const state = {
   createArchitectConversationId: null,
 };
 
+// Temporary safety switches for remote access issues.
+const DISABLE_HEALTH_PANEL = true;
+const DISABLE_SEMANTIC_DIFF = true;
+
 const DEFAULT_SETTINGS = {
   viewMode: "yaml",
   compareTarget: "current",
@@ -628,6 +632,10 @@ function renderList() {
 function renderHealthPanel() {
   const box = $("healthPanel");
   if (!box) return;
+  if (DISABLE_HEALTH_PANEL) {
+    box.innerHTML = `<div class="muted">Health checks temporarily disabled.</div>`;
+    return;
+  }
   if (state.capabilitiesView) {
     box.innerHTML = `<div class="muted">Knowledgebase view.</div>`;
     return;
@@ -674,6 +682,12 @@ function renderHealthPanel() {
 }
 
 async function loadHealth(id = state.activeId) {
+  if (DISABLE_HEALTH_PANEL) {
+    state.health = null;
+    state.healthLoading = false;
+    renderHealthPanel();
+    return;
+  }
   if (!id || !isAutomation() || state.capabilitiesView) {
     state.health = null;
     renderHealthPanel();
@@ -1700,7 +1714,7 @@ function updateAutomationPanels() {
   const show = isAutomation() && !state.capabilitiesView;
   const healthCard = document.querySelector('.card[data-card="health"]');
   const scenarioCard = document.querySelector('.card[data-card="scenario"]');
-  if (healthCard) healthCard.hidden = !show;
+  if (healthCard) healthCard.hidden = !show || DISABLE_HEALTH_PANEL;
   if (scenarioCard) scenarioCard.hidden = !show;
   renderHealthPanel();
   renderScenarioOutput();
@@ -2512,6 +2526,10 @@ function buildSemanticSummary(baseText, nextText) {
 function renderDiff(baseText, compareText) {
   const box = $("diffBox");
   if (!box) return;
+  if (DISABLE_SEMANTIC_DIFF) {
+    box.innerHTML = `<div class="muted">Semantic diff temporarily disabled.</div>`;
+    return;
+  }
   if (state.capabilitiesView) {
     box.innerHTML = `<div class="muted">Knowledgebase view.</div>`;
     return;
