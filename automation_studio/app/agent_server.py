@@ -168,9 +168,22 @@ def root(request: Request):
 
     if "<base " not in html:
         html = html.replace("<head>", f"<head>\n  <base href=\"{base_href}\">", 1)
+    agents_payload = {
+        "architect": ARCHITECT_AGENT_ID,
+        "builder": BUILDER_AGENT_ID,
+        "dumb_builder": DUMB_BUILDER_AGENT_ID,
+        "summary": SUMMARY_AGENT_ID,
+        "capability_mapper": CAPABILITY_MAPPER_AGENT_ID,
+        "semantic_diff": SEMANTIC_DIFF_AGENT_ID,
+        "kb_sync_helper": KB_SYNC_HELPER_AGENT_ID,
+    }
+    inject_parts: List[str] = []
     if AGENT_SECRET:
         secret_js = json.dumps(AGENT_SECRET)
-        inject = f"<script>window.__AGENT_SECRET__={secret_js};</script>"
+        inject_parts.append(f"window.__AGENT_SECRET__={secret_js};")
+    inject_parts.append(f"window.__AGENTS__={json.dumps(agents_payload)};")
+    if inject_parts:
+        inject = "<script>" + "".join(inject_parts) + "</script>"
         if "</head>" in html:
             html = html.replace("</head>", f"  {inject}\n</head>", 1)
         else:
@@ -3151,7 +3164,9 @@ def call_builder(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     def _post(text: str, agent_id: str) -> str:
         r = requests.post(url, headers=ha_headers(), json={"agent_id": agent_id, "text": text}, timeout=180)
-        r.raise_for_status()
+        if not r.ok:
+            detail = r.text.strip() if r.text else r.reason
+            raise RuntimeError(f"Conversation agent '{agent_id}' failed ({r.status_code}): {detail}")
         data = r.json()
         speech = ((((data.get("response") or {}).get("speech") or {}).get("plain") or {}).get("speech") or "").strip()
         return speech
@@ -5435,7 +5450,10 @@ async def build_ha_config_from_text(
     if current_yaml:
         prompt["current_yaml"] = current_yaml
 
-    out = call_builder(prompt)
+    try:
+        out = call_builder(prompt)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     if not isinstance(out, dict):
         raise RuntimeError(f"Builder returned non-object JSON: {type(out).__name__}")
 

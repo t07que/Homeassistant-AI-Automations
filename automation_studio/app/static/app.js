@@ -530,6 +530,22 @@ function isFormData(v) {
   return typeof FormData !== "undefined" && v instanceof FormData;
 }
 
+function getAgentId(key) {
+  const agents = window.__AGENTS__ || {};
+  return agents[key] || "";
+}
+
+function agentStatusText(key, actionText, fallbackLabel) {
+  const labelMap = {
+    architect: "Architect",
+    builder: "Builder",
+    kb_sync_helper: "Knowledgebase agent",
+  };
+  const label = fallbackLabel || labelMap[key] || "Agent";
+  const id = getAgentId(key);
+  return id ? `${label} (${id}) ${actionText}` : `${label} ${actionText}`;
+}
+
 const APP_BASE_PATH = (() => {
   const baseEl = document.querySelector("base");
   let basePath = baseEl?.getAttribute("href") || window.location.pathname || "/";
@@ -1234,7 +1250,7 @@ async function runKbSync() {
   if (runBtn) runBtn.disabled = true;
   const promptText = ($("kbSyncPrompt")?.value || "").trim();
   try {
-    setStatus("kbSyncStatus", "architect", "Knowledgebase agent is thinking...");
+    setStatus("kbSyncStatus", "architect", agentStatusText("kb_sync_helper", "is thinking..."));
     if (promptText) {
       kbSyncOutputAppend(promptText, "user");
     }
@@ -1290,7 +1306,7 @@ async function runKbSave() {
   const saveBtn = $("kbSyncSaveBtn");
   if (saveBtn) saveBtn.disabled = true;
   try {
-    setStatus("kbSyncStatus", "architect", "Preparing knowledgebase update...");
+    setStatus("kbSyncStatus", "architect", agentStatusText("kb_sync_helper", "is preparing an update..."));
     const previewOut = await api("/api/capabilities/learn", {
       method: "POST",
       body: JSON.stringify({
@@ -3502,7 +3518,7 @@ async function runCreateFromPrompt() {
   }
 
   try {
-    setStatus("createStatus", "architect", "Architect is thinking...");
+    setStatus("createStatus", "architect", agentStatusText("architect", "is thinking..."));
     toast("Asking Architect...", 2500);
     createOutputAppend(text, "user");
     createOutputAppend("Sending to Architect...", "system");
@@ -3590,7 +3606,7 @@ async function createArchitectFinalize() {
       $("promptText").value = "";
     }
 
-    setStatus("createStatus", "builder", "Builder is working...");
+    setStatus("createStatus", "builder", agentStatusText("builder", "is working..."));
     toast("Sending to builder...", 2500);
 
     const out = await api(`/api/architect/finalize`, {
@@ -3797,7 +3813,7 @@ async function createNewFromAiPrompt() {
   if (!prompt) return toast("Write a prompt first.");
 
   try {
-    setStatus("aiStatus", "architect", "Architect is thinking...");
+    setStatus("aiStatus", "architect", agentStatusText("architect", "is thinking..."));
     toast("Asking Architect...", 2500);
     aiOutputAppend(prompt, "user");
     aiOutputAppend("Sending to Architect...", "system");
@@ -3830,7 +3846,7 @@ async function createNewFromAiPrompt() {
     });
     if (!ok) return;
 
-    setStatus("aiStatus", "builder", "Builder is working...");
+    setStatus("aiStatus", "builder", agentStatusText("builder", "is working..."));
     aiOutputAppend("Sending final prompt to builder...", "system");
     const out = await api(`/api/architect/finalize`, {
       method: "POST",
@@ -3887,7 +3903,7 @@ async function aiArchitectChat() {
   }
 
   try {
-    setStatus("aiStatus", "architect", "Architect is thinking...");
+    setStatus("aiStatus", "architect", agentStatusText("architect", "is thinking..."));
     aiOutputAppend(prompt, "user");
     aiOutputAppend("Sending to Architect...", "system");
     pushAiHistory("user", prompt);
@@ -3970,7 +3986,7 @@ async function aiArchitectFinalize(options = {}) {
       clearAiPrompts();
     }
 
-    setStatus("aiStatus", "builder", "Builder is working...");
+    setStatus("aiStatus", "builder", agentStatusText("builder", "is working..."));
     toast("Sending to builder...", 2500);
 
     const body = {
