@@ -14,8 +14,9 @@ if [ -z "$HA_URL" ]; then
 fi
 
 HA_TOKEN="$(bashio::config 'ha_token')"
-if [ -z "$HA_TOKEN" ] && [ -n "$SUPERVISOR_TOKEN" ]; then
-  HA_TOKEN="$SUPERVISOR_TOKEN"
+SUPERVISOR_TOKEN_VALUE="${SUPERVISOR_TOKEN:-}"
+if [ -z "$HA_TOKEN" ] && [ -n "$SUPERVISOR_TOKEN_VALUE" ]; then
+  HA_TOKEN="$SUPERVISOR_TOKEN_VALUE"
 fi
 
 AUTOMATIONS_FILE_PATH="$(bashio::config 'automations_path')"

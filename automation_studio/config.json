@@ -1,6 +1,6 @@
 {
   "name": "Automation Studio",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "slug": "automation_studio",
   "description": "AI Auto Automation Builder UI and API",
   "arch": ["amd64", "aarch64", "armv7", "armhf", "i386"],
@@ -8,6 +8,7 @@
   "boot": "auto",
   "init": false,
   "homeassistant_api": true,
+  "hassio_api": true,
   "ingress": true,
   "ingress_port": 8124,
   "panel_icon": "mdi:robot",
