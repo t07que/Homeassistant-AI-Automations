@@ -21,6 +21,13 @@ keys = [
     "ha_url",
     "ha_token",
     "agent_secret",
+    "builder_agent_id",
+    "architect_agent_id",
+    "summary_agent_id",
+    "capability_mapper_agent_id",
+    "semantic_diff_agent_id",
+    "kb_sync_helper_agent_id",
+    "dumb_builder_agent_id",
     "automations_path",
     "scripts_path",
     "restore_state_path",
@@ -59,6 +66,14 @@ RUNTIME_CONFIG_FILE="${OPT_RUNTIME_CONFIG_FILE:-/data/runtime_config.json}"
 CAPABILITIES_FILE="${OPT_CAPABILITIES_FILE:-/data/capabilities.yaml}"
 AGENT_SECRET="${OPT_AGENT_SECRET:-}"
 
+BUILDER_AGENT_ID="${OPT_BUILDER_AGENT_ID:-}"
+ARCHITECT_AGENT_ID="${OPT_ARCHITECT_AGENT_ID:-}"
+SUMMARY_AGENT_ID="${OPT_SUMMARY_AGENT_ID:-}"
+CAPABILITY_MAPPER_AGENT_ID="${OPT_CAPABILITY_MAPPER_AGENT_ID:-}"
+SEMANTIC_DIFF_AGENT_ID="${OPT_SEMANTIC_DIFF_AGENT_ID:-}"
+KB_SYNC_HELPER_AGENT_ID="${OPT_KB_SYNC_HELPER_AGENT_ID:-}"
+DUMB_BUILDER_AGENT_ID="${OPT_DUMB_BUILDER_AGENT_ID:-}"
+
 export STATIC_DIR
 export HA_URL
 export HA_TOKEN
@@ -71,6 +86,13 @@ export LOCAL_DB_FILE
 export SUMMARY_CACHE_FILE
 export RUNTIME_CONFIG_FILE
 export CAPABILITIES_FILE
+export BUILDER_AGENT_ID
+export ARCHITECT_AGENT_ID
+export SUMMARY_AGENT_ID
+export CAPABILITY_MAPPER_AGENT_ID
+export SEMANTIC_DIFF_AGENT_ID
+export KB_SYNC_HELPER_AGENT_ID
+export DUMB_BUILDER_AGENT_ID
 
 cd /app
 

@@ -423,7 +423,7 @@ async def api_import_automations(request: Request):
 HA_URL = _normalize_ha_url(os.getenv("HA_URL"))
 HA_TOKEN = os.getenv("HA_TOKEN", "")
 AGENT_SECRET = os.getenv("AGENT_SECRET", "")
-BUILDER_AGENT_ID = os.getenv("BUILDER_AGENT_ID", "conversation.homeassistant")
+BUILDER_AGENT_ID = os.getenv("BUILDER_AGENT_ID", "conversation.autoautomation")
 AI_EDIT_AGENT_ID = os.getenv("AI_EDIT_AGENT_ID", BUILDER_AGENT_ID)
 ARCHITECT_AGENT_ID = os.getenv("ARCHITECT_AGENT_ID", "conversation.automation_architect")
 SUMMARY_AGENT_ID = os.getenv("SUMMARY_AGENT_ID", "conversation.automation_summary")
@@ -3160,6 +3160,8 @@ def _builder_request_text(payload: Dict[str, Any], *, minimal: bool, addendum: O
 
 
 def call_builder(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not BUILDER_AGENT_ID:
+        raise RuntimeError("BUILDER_AGENT_ID not configured")
     url = f"{HA_URL}/api/conversation/process"
 
     def _post(text: str, agent_id: str) -> str:
@@ -3256,42 +3258,56 @@ def api_admin_agent_check(x_ha_agent_secret: str = Header(default="")):
     def record(name: str, agent_id: str, ok: bool, detail: str = ""):
         results[name] = {"agent_id": agent_id, "ok": ok, "detail": detail}
 
-    summary_out = _call_helper_agent_json(
-        SUMMARY_AGENT_ID,
-        {
-            "request": "health check",
-            "current_yaml": yaml_test,
-            "candidates": [],
-            "capabilities": caps_slim,
-        },
-        required_keys=["triggers", "conditions", "actions", "entities", "services", "confidence"],
-    )
-    record("summary", SUMMARY_AGENT_ID, bool(summary_out), "" if summary_out else "invalid_json_or_missing_keys")
+    def record_disabled(name: str, agent_id: str) -> bool:
+        if not agent_id:
+            results[name] = {"agent_id": agent_id, "ok": True, "detail": "disabled"}
+            return True
+        return False
 
-    mapper_out = _call_helper_agent_json(
-        CAPABILITY_MAPPER_AGENT_ID,
-        {
-            "summary": summary_out or fallback_summary,
-            "capabilities": caps_slim,
-            "candidates": [],
-        },
-        required_keys=["missing_entities", "missing_services", "questions", "confidence"],
-    )
-    record("capability_mapper", CAPABILITY_MAPPER_AGENT_ID, bool(mapper_out), "" if mapper_out else "invalid_json_or_missing_keys")
+    summary_out = None
+    if not record_disabled("summary", SUMMARY_AGENT_ID):
+        summary_out = _call_helper_agent_json(
+            SUMMARY_AGENT_ID,
+            {
+                "request": "health check",
+                "current_yaml": yaml_test,
+                "candidates": [],
+                "capabilities": caps_slim,
+            },
+            required_keys=["triggers", "conditions", "actions", "entities", "services", "confidence"],
+        )
+        record("summary", SUMMARY_AGENT_ID, bool(summary_out), "" if summary_out else "invalid_json_or_missing_keys")
 
-    diff_out = _call_helper_agent_json(
-        SEMANTIC_DIFF_AGENT_ID,
-        {"before_summary": fallback_summary, "after_summary": fallback_summary},
-        required_keys=["summary", "added", "removed", "changed", "confidence"],
-    )
-    record("semantic_diff", SEMANTIC_DIFF_AGENT_ID, bool(diff_out), "" if diff_out else "invalid_json_or_missing_keys")
+    mapper_out = None
+    if not record_disabled("capability_mapper", CAPABILITY_MAPPER_AGENT_ID):
+        mapper_out = _call_helper_agent_json(
+            CAPABILITY_MAPPER_AGENT_ID,
+            {
+                "summary": summary_out or fallback_summary,
+                "capabilities": caps_slim,
+                "candidates": [],
+            },
+            required_keys=["missing_entities", "missing_services", "questions", "confidence"],
+        )
+        record("capability_mapper", CAPABILITY_MAPPER_AGENT_ID, bool(mapper_out), "" if mapper_out else "invalid_json_or_missing_keys")
 
-    kb_out = _call_helper_agent_json(
-        KB_SYNC_HELPER_AGENT_ID,
-        {"user_request": "health check", "summary": summary_out or fallback_summary, "capabilities": caps_slim},
-        required_keys=["questions", "confidence"],
-    )
-    record("kb_sync_helper", KB_SYNC_HELPER_AGENT_ID, bool(kb_out), "" if kb_out else "invalid_json_or_missing_keys")
+    diff_out = None
+    if not record_disabled("semantic_diff", SEMANTIC_DIFF_AGENT_ID):
+        diff_out = _call_helper_agent_json(
+            SEMANTIC_DIFF_AGENT_ID,
+            {"before_summary": fallback_summary, "after_summary": fallback_summary},
+            required_keys=["summary", "added", "removed", "changed", "confidence"],
+        )
+        record("semantic_diff", SEMANTIC_DIFF_AGENT_ID, bool(diff_out), "" if diff_out else "invalid_json_or_missing_keys")
+
+    kb_out = None
+    if not record_disabled("kb_sync_helper", KB_SYNC_HELPER_AGENT_ID):
+        kb_out = _call_helper_agent_json(
+            KB_SYNC_HELPER_AGENT_ID,
+            {"user_request": "health check", "summary": summary_out or fallback_summary, "capabilities": caps_slim},
+            required_keys=["questions", "confidence"],
+        )
+        record("kb_sync_helper", KB_SYNC_HELPER_AGENT_ID, bool(kb_out), "" if kb_out else "invalid_json_or_missing_keys")
 
     dumb_ok = False
     dumb_detail = ""
@@ -3328,7 +3344,7 @@ def api_admin_agent_check(x_ha_agent_secret: str = Header(default="")):
             dumb_detail = f"error:{type(e).__name__}"
     else:
         dumb_detail = "agent_id_not_set"
-    record("dumb_builder", DUMB_BUILDER_AGENT_ID, dumb_ok, dumb_detail)
+    record("dumb_builder", DUMB_BUILDER_AGENT_ID, dumb_ok if DUMB_BUILDER_AGENT_ID else True, dumb_detail)
 
     bad_agents = [k for k, v in results.items() if not v.get("ok")]
     return {
