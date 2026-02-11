@@ -522,6 +522,24 @@ function isFormData(v) {
   return typeof FormData !== "undefined" && v instanceof FormData;
 }
 
+const APP_BASE_PATH = (() => {
+  const baseEl = document.querySelector("base");
+  let basePath = baseEl?.getAttribute("href") || window.location.pathname || "/";
+  try {
+    basePath = new URL(basePath, window.location.origin).pathname;
+  } catch (err) {
+    // Leave basePath as-is if parsing fails.
+  }
+  if (!basePath.startsWith("/")) basePath = `/${basePath}`;
+  return basePath.replace(/\/$/, "");
+})();
+
+function withBasePath(path) {
+  if (!path || !path.startsWith("/")) return path;
+  if (!APP_BASE_PATH || APP_BASE_PATH === "/") return path;
+  return `${APP_BASE_PATH}${path}`;
+}
+
 async function api(path, opts = {}) {
   opts.headers = opts.headers || {};
   // FastAPI param x_ha_agent_secret accepts header "X-HA-AGENT-SECRET"
@@ -537,7 +555,7 @@ async function api(path, opts = {}) {
     if (opts.headers["Content-Type"]) delete opts.headers["Content-Type"];
   }
 
-  const res = await fetch(path, opts);
+  const res = await fetch(withBasePath(path), opts);
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
