@@ -13,9 +13,11 @@ RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
 WORKDIR /app
 COPY app/ /app/
 COPY run.sh /app/run.sh
+COPY rootfs/ /
 
 ENV PATH="/opt/venv/bin:$PATH"
 
 RUN chmod +x /app/run.sh
+RUN chmod +x /etc/services.d/automation_studio/run
 
-CMD ["/app/run.sh"]
+CMD ["/init"]
