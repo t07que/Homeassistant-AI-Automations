@@ -107,14 +107,28 @@ def debug_ui():
         "files": [p.name for p in STATIC_PATH.iterdir()] if STATIC_PATH.is_dir() else [],
     }
 
+def _ingress_base_path(request: Request) -> str:
+    # Home Assistant ingress sends the base path in headers when proxying.
+    ingress = (
+        request.headers.get("X-Ingress-Path")
+        or request.headers.get("X-Forwarded-Path")
+        or request.headers.get("X-Forwarded-Prefix")
+    )
+    if ingress:
+        return ingress.rstrip("/")
+    root_path = request.scope.get("root_path") or ""
+    return root_path.rstrip("/")
+
 # Redirect /ui -> /ui/ (important on Windows/Chrome)
 @app.get("/ui", include_in_schema=False)
-def ui_redirect():
-    return RedirectResponse(url="/ui/")
+def ui_redirect(request: Request):
+    base = _ingress_base_path(request)
+    return RedirectResponse(url=f"{base}/ui/")
 
 @app.get("/", include_in_schema=False)
-def root():
-    return RedirectResponse(url="/ui/")
+def root(request: Request):
+    base = _ingress_base_path(request)
+    return RedirectResponse(url=f"{base}/ui/")
 
 # Mount UI
 app.mount("/ui", StaticFiles(directory=str(STATIC_PATH), html=True), name="ui")
