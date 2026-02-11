@@ -16,7 +16,7 @@ import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Query, Body, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 from pathlib import Path
 import datetime
@@ -107,19 +107,46 @@ def debug_ui():
         "files": [p.name for p in STATIC_PATH.iterdir()] if STATIC_PATH.is_dir() else [],
     }
 
-# Redirect /ui -> /ui/ (important on Windows/Chrome)
-@app.get("/ui", include_in_schema=False)
-def ui_redirect():
-    return RedirectResponse(url="/ui/")
+def _ingress_base_path(request: Request) -> str:
+    # Home Assistant ingress sends the base path in headers when proxying.
+    ingress = (
+        request.headers.get("X-Ingress-Path")
+        or request.headers.get("X-Forwarded-Path")
+        or request.headers.get("X-Forwarded-Prefix")
+        or request.headers.get("X-Forwarded-Uri")
+        or request.headers.get("X-Original-Uri")
+    )
+    if ingress:
+        return ingress.rstrip("/")
+    root_path = request.scope.get("root_path") or ""
+    return root_path.rstrip("/")
+
+@app.get("/__debug/headers", include_in_schema=False)
+def debug_headers(request: Request):
+    headers = {k: v for k, v in request.headers.items()}
+    return {
+        "ingress_base": _ingress_base_path(request),
+        "headers": headers,
+    }
 
 @app.get("/", include_in_schema=False)
-def root():
-    return RedirectResponse(url="/ui/")
+def root(request: Request):
+    index_path = STATIC_PATH / "index.html"
+    if not index_path.exists():
+        return HTMLResponse("<h1>UI index missing</h1>", status_code=500)
 
-# Mount UI
-app.mount("/ui", StaticFiles(directory=str(STATIC_PATH), html=True), name="ui")
+    base = _ingress_base_path(request)
+    base_href = f"{base}/" if base else "/"
+    try:
+        html = index_path.read_text(encoding="utf-8")
+    except Exception:
+        return FileResponse(index_path)
 
-# Optional: direct file access for testing
+    if "<base " not in html:
+        html = html.replace("<head>", f"<head>\n  <base href=\"{base_href}\">", 1)
+    return HTMLResponse(html)
+
+# Static assets
 app.mount("/static", StaticFiles(directory=str(STATIC_PATH), html=False), name="static")
 
 
