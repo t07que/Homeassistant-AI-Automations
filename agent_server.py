@@ -119,16 +119,13 @@ def _ingress_base_path(request: Request) -> str:
     root_path = request.scope.get("root_path") or ""
     return root_path.rstrip("/")
 
-# Redirect /ui -> /ui/ (important on Windows/Chrome)
-@app.get("/ui", include_in_schema=False)
-def ui_redirect(request: Request):
-    base = _ingress_base_path(request)
-    return RedirectResponse(url=f"{base}/ui/")
-
 @app.get("/", include_in_schema=False)
 def root(request: Request):
     base = _ingress_base_path(request)
-    return RedirectResponse(url=f"{base}/ui/")
+    if base:
+        return RedirectResponse(url=f"{base}/ui/")
+    # Use a relative redirect so ingress prefixes are preserved.
+    return RedirectResponse(url="ui/")
 
 # Mount UI
 app.mount("/ui", StaticFiles(directory=str(STATIC_PATH), html=True), name="ui")
