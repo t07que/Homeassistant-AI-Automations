@@ -5,7 +5,7 @@ Automation Studio is a local-first UI and API that helps you build, edit, and ma
 ## What This Repo Includes
 - FastAPI backend (`agent_server.py`)
 - Web UI (`static/`)
-- Home Assistant add-on wrapper (`ha-addon/`)
+- Home Assistant add-on wrapper (`automation_studio/`)
 - AI prompt files for all agents
 - Example knowledgebase (`capabilities.example.yaml`)
 
@@ -33,7 +33,7 @@ Automation Studio is a local-first UI and API that helps you build, edit, and ma
    ```
 
 ## Home Assistant Add-on
-The add-on lives in `ha-addon/`.
+The add-on lives in `automation_studio/`.
 
 ### Install (GitHub repo)
 1. Go to **Settings -> Add-ons -> Add-on Store**.
@@ -77,7 +77,7 @@ Helper agents:
 Use your preferred models in each agent. The default IDs are set in `agent_server.py` and can be overridden with env vars.
 
 ## Repository Metadata
-If you plan to publish the add-on, update `repository.yaml` with your name and repo URL.
+If you plan to publish the add-on, update `repository.yaml` (and `repository.json`) with your name and repo URL.
 
 ## Security
 - Keep tokens and secrets out of the repo.
