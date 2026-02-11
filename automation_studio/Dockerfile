@@ -19,3 +19,5 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 RUN chmod +x /app/run.sh
 RUN chmod +x /etc/services.d/automation_studio/run
+
+ENTRYPOINT ["/init"]
