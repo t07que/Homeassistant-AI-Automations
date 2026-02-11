@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 import datetime
 
 load_dotenv()
@@ -35,6 +36,29 @@ def _clean_env_value(value: Optional[str]) -> Optional[str]:
     # Guard against mistakenly copied Python expressions in .env
     if "os.getenv" in v or "os.environ" in v:
         return None
+    return v
+
+def _normalize_ha_url(value: Optional[str]) -> str:
+    v = _clean_env_value(value) or ""
+    v = v.strip()
+    if not v:
+        return ""
+    v = v.rstrip("/")
+    try:
+        parsed = urlparse(v)
+    except Exception:
+        return v
+    if parsed.scheme in ("http", "https") and parsed.netloc and parsed.port is None and (parsed.path in ("", "/")):
+        host = parsed.hostname or ""
+        if host and host not in ("supervisor", "homeassistant"):
+            netloc = parsed.netloc
+            if "@" in netloc:
+                creds, hostpart = netloc.rsplit("@", 1)
+                netloc = f"{creds}@{hostpart}:8123"
+            else:
+                netloc = f"{netloc}:8123"
+            parsed = parsed._replace(netloc=netloc)
+            return urlunparse(parsed).rstrip("/")
     return v
 
 def _env_int(name: str, default: int) -> int:
@@ -383,7 +407,7 @@ async def api_import_automations(request: Request):
 # ----------------------------
 # ENV CONFIG
 # ----------------------------
-HA_URL = os.getenv("HA_URL", "").rstrip("/")
+HA_URL = _normalize_ha_url(os.getenv("HA_URL"))
 HA_TOKEN = os.getenv("HA_TOKEN", "")
 AGENT_SECRET = os.getenv("AGENT_SECRET", "")
 BUILDER_AGENT_ID = os.getenv("BUILDER_AGENT_ID", "conversation.homeassistant")
