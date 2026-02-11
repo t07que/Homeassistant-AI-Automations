@@ -75,6 +75,10 @@ const state = {
 const DISABLE_HEALTH_PANEL = true;
 const DISABLE_SEMANTIC_DIFF = true;
 
+const SEARCH_DEBOUNCE_MS = 350;
+let debouncedLoadList = null;
+let listRequestSeq = 0;
+
 const DEFAULT_SETTINGS = {
   viewMode: "yaml",
   compareTarget: "current",
@@ -3289,12 +3293,14 @@ function setDirty(isDirty) {
 }
 
 async function loadList() {
+  const requestId = ++listRequestSeq;
   const q = encodeURIComponent(state.q || "");
   const url = `${entityEndpoint()}?q=${q}`;
 
   log("Loading list...");
   try {
     const data = await api(url);
+    if (requestId !== listRequestSeq) return false;
     state.list = normalizeListPayload(data);
     if (state.activeId && state.active) {
       const activeItem = state.list.find((it) => it.id === state.activeId);
@@ -3310,6 +3316,7 @@ async function loadList() {
     log(`Loaded ${state.list.length} ${entityLabelPlural()}.`);
     return true;
   } catch (e) {
+    if (requestId !== listRequestSeq) return false;
     const msg = String(e.message || e);
     if (msg.startsWith("412") || msg.includes("AUTOMATIONS_FILE_PATH") || msg.includes("SCRIPTS_FILE_PATH")) {
       showSetupBanner();
@@ -4229,7 +4236,8 @@ function wireUI() {
 
   $("searchInput").addEventListener("input", (e) => {
     state.q = e.target.value.trim();
-    debounce(loadList, 250)();
+    if (!debouncedLoadList) debouncedLoadList = debounce(loadList, SEARCH_DEBOUNCE_MS);
+    debouncedLoadList();
   });
 
   $("clearSearchBtn").onclick = () => {
