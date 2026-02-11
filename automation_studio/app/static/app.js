@@ -544,10 +544,20 @@ function withBasePath(path) {
   return `${APP_BASE_PATH}${path}`;
 }
 
+function getAgentSecret() {
+  const stored = localStorage.getItem("agent_secret");
+  if (stored) return stored;
+  const injected = window.__AGENT_SECRET__ || "";
+  if (injected) {
+    localStorage.setItem("agent_secret", injected);
+  }
+  return injected;
+}
+
 async function api(path, opts = {}) {
   opts.headers = opts.headers || {};
   // FastAPI param x_ha_agent_secret accepts header "X-HA-AGENT-SECRET"
-  opts.headers["X-HA-AGENT-SECRET"] = localStorage.getItem("agent_secret") || "";
+  opts.headers["X-HA-AGENT-SECRET"] = getAgentSecret();
 
   // If we're sending JSON, set content-type automatically.
   // (Don't set it for FormData; the browser will add boundaries.)

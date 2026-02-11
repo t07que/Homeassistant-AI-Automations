@@ -144,6 +144,13 @@ def root(request: Request):
 
     if "<base " not in html:
         html = html.replace("<head>", f"<head>\n  <base href=\"{base_href}\">", 1)
+    if AGENT_SECRET:
+        secret_js = json.dumps(AGENT_SECRET)
+        inject = f"<script>window.__AGENT_SECRET__={secret_js};</script>"
+        if "</head>" in html:
+            html = html.replace("</head>", f"  {inject}\n</head>", 1)
+        else:
+            html += inject
     return HTMLResponse(html)
 
 # Static assets
