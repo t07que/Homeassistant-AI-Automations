@@ -182,6 +182,42 @@ function formatAgentStatusList(list) {
     .join(", ");
 }
 
+function formatUsd(amount) {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return "$0.0000";
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  if (value >= 0.1) return `$${value.toFixed(3)}`;
+  return `$${value.toFixed(5)}`;
+}
+
+function formatUsageEvent(ev) {
+  const name = ev?.name || ev?.agent_id || "agent";
+  const model = ev?.model || "model";
+  const promptTokens = Number(ev?.prompt_tokens) || 0;
+  const completionTokens = Number(ev?.completion_tokens) || 0;
+  const totalTokens = Number.isFinite(Number(ev?.total_tokens))
+    ? Number(ev?.total_tokens)
+    : promptTokens + completionTokens;
+  const cost = formatUsd(ev?.cost_usd);
+  return `${name} (${model}): ${promptTokens} in + ${completionTokens} out = ${totalTokens} tokens (~${cost})`;
+}
+
+function appendUsage(out, label = "Usage") {
+  const events = Array.isArray(out?.usage_events) ? out.usage_events : [];
+  const total = out?.usage_total;
+  if (!events.length && !total) return;
+  events.forEach((ev) => log(`${label}: ${formatUsageEvent(ev)}`));
+  if (total) {
+    const promptTokens = Number(total?.prompt_tokens) || 0;
+    const completionTokens = Number(total?.completion_tokens) || 0;
+    const totalTokens = Number.isFinite(Number(total?.total_tokens))
+      ? Number(total?.total_tokens)
+      : promptTokens + completionTokens;
+    const cost = formatUsd(total?.cost_usd);
+    log(`${label} total: ${promptTokens} in + ${completionTokens} out = ${totalTokens} tokens (~${cost})`);
+  }
+}
+
 function appendAgentStatus(out, targetAppend, statusId, label = "Helpers") {
   const list = Array.isArray(out?.agent_status) ? out.agent_status : [];
   if (!list.length) return;
@@ -668,7 +704,11 @@ async function api(path, opts = {}) {
   }
 
   const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) return await res.json();
+  if (ct.includes("application/json")) {
+    const data = await res.json();
+    appendUsage(data);
+    return data;
+  }
   return await res.text();
 }
 

@@ -504,6 +504,12 @@ SCRIPT_ID_PREFIX = "script__"
 # Helper agent trace (per-request)
 _AGENT_TRACE: ContextVar[Optional[List[Dict[str, Any]]]] = ContextVar("agent_trace", default=None)
 
+# Approximate model cost per 1K tokens (input/output). Adjust as needed.
+MODEL_COSTS_USD = {
+    "gpt-5.2": {"input": 0.005, "output": 0.015},
+    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+}
+
 
 def _agent_trace_start():
     return _AGENT_TRACE.set([])
@@ -520,8 +526,98 @@ def _helper_name_for_agent(agent_id: str) -> str:
         return "kb_sync_helper"
     return agent_id or "agent"
 
+def _role_for_agent(agent_id: str) -> str:
+    if agent_id == ARCHITECT_AGENT_ID:
+        return "architect"
+    if agent_id == BUILDER_AGENT_ID:
+        return "builder"
+    if agent_id == DUMB_BUILDER_AGENT_ID:
+        return "dumb_builder"
+    if agent_id == AI_EDIT_AGENT_ID:
+        return "editor"
+    if agent_id == SUMMARY_AGENT_ID:
+        return "summary"
+    if agent_id == CAPABILITY_MAPPER_AGENT_ID:
+        return "capability_mapper"
+    if agent_id == SEMANTIC_DIFF_AGENT_ID:
+        return "semantic_diff"
+    if agent_id == KB_SYNC_HELPER_AGENT_ID:
+        return "kb_sync_helper"
+    return "agent"
 
-def _agent_trace_record(agent_id: str, ok: bool, detail: str = "") -> None:
+def _suggested_model_for_agent(agent_id: str) -> str:
+    if agent_id in {ARCHITECT_AGENT_ID, BUILDER_AGENT_ID, AI_EDIT_AGENT_ID}:
+        return "gpt-5.2"
+    if agent_id in {DUMB_BUILDER_AGENT_ID, SUMMARY_AGENT_ID, CAPABILITY_MAPPER_AGENT_ID, SEMANTIC_DIFF_AGENT_ID, KB_SYNC_HELPER_AGENT_ID}:
+        return "gpt-4o-mini"
+    return "gpt-4o-mini"
+
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, int(math.ceil(len(text) / 4)))
+
+def _usage_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    rates = MODEL_COSTS_USD.get(model)
+    if not rates:
+        return 0.0
+    return (prompt_tokens / 1000.0) * rates["input"] + (completion_tokens / 1000.0) * rates["output"]
+
+def _build_usage_event(agent_id: str, prompt_text: str, response_text: str, name: Optional[str] = None) -> Dict[str, Any]:
+    prompt_tokens = _estimate_tokens(prompt_text)
+    completion_tokens = _estimate_tokens(response_text)
+    total_tokens = prompt_tokens + completion_tokens
+    model = _suggested_model_for_agent(agent_id)
+    cost_usd = _usage_cost_usd(model, prompt_tokens, completion_tokens)
+    return {
+        "name": name or _role_for_agent(agent_id),
+        "agent_id": agent_id,
+        "model": model,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "cost_usd": round(cost_usd, 6),
+    }
+
+def _merge_usage(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not a:
+        return dict(b or {})
+    if not b:
+        return dict(a)
+    merged = dict(a)
+    merged["prompt_tokens"] = int(a.get("prompt_tokens", 0)) + int(b.get("prompt_tokens", 0))
+    merged["completion_tokens"] = int(a.get("completion_tokens", 0)) + int(b.get("completion_tokens", 0))
+    merged["total_tokens"] = int(a.get("total_tokens", 0)) + int(b.get("total_tokens", 0))
+    merged["cost_usd"] = round(float(a.get("cost_usd", 0.0)) + float(b.get("cost_usd", 0.0)), 6)
+    model_a = a.get("model")
+    model_b = b.get("model")
+    merged["model"] = model_a if model_a == model_b else "mixed"
+    return merged
+
+def _collect_usage_events(primary: Optional[Dict[str, Any]] = None, agent_status: Optional[List[Dict[str, Any]]] = None, extra: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    events: List[Dict[str, Any]] = []
+    if primary:
+        events.append(primary)
+    if agent_status:
+        for item in agent_status:
+            usage = item.get("usage")
+            if isinstance(usage, dict):
+                if not usage.get("name") and item.get("name"):
+                    usage = dict(usage)
+                    usage["name"] = item.get("name")
+                events.append(usage)
+    if extra:
+        events.extend(extra)
+    total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cost_usd": 0.0}
+    for ev in events:
+        total["prompt_tokens"] += int(ev.get("prompt_tokens", 0))
+        total["completion_tokens"] += int(ev.get("completion_tokens", 0))
+        total["total_tokens"] += int(ev.get("total_tokens", 0))
+        total["cost_usd"] += float(ev.get("cost_usd", 0.0))
+    total["cost_usd"] = round(total["cost_usd"], 6)
+    return events, total
+
+def _agent_trace_record(agent_id: str, ok: bool, detail: str = "", usage: Optional[Dict[str, Any]] = None) -> None:
     trace = _AGENT_TRACE.get()
     if trace is None:
         return
@@ -530,6 +626,7 @@ def _agent_trace_record(agent_id: str, ok: bool, detail: str = "") -> None:
         "agent_id": agent_id,
         "ok": bool(ok),
         "detail": detail or "",
+        "usage": usage or None,
     })
 
 
@@ -550,6 +647,7 @@ def _agent_trace_finish(token) -> List[Dict[str, Any]]:
             merged[key]["ok"] = bool(merged[key].get("ok")) and bool(item.get("ok"))
             if not item.get("ok") and item.get("detail"):
                 merged[key]["detail"] = item.get("detail")
+            merged[key]["usage"] = _merge_usage(merged[key].get("usage"), item.get("usage"))
     return list(merged.values())
 
 
@@ -1988,7 +2086,7 @@ def _call_helper_agent_json(
             "Return ONLY a single minified JSON object. No markdown. No commentary.\n"
             "INPUT_JSON:\n" + json.dumps(payload, ensure_ascii=False)
         )
-        speech = call_conversation_agent(agent_id, text)
+        speech, usage = call_conversation_agent(agent_id, text)
         data = None
         try:
             data = json.loads(speech)
@@ -1997,23 +2095,23 @@ def _call_helper_agent_json(
             if extracted:
                 data = json.loads(extracted)
         if not isinstance(data, dict):
-            _agent_trace_record(agent_id, False, "invalid_json")
+            _agent_trace_record(agent_id, False, "invalid_json", usage)
             return None
         if required_keys:
             for key in required_keys:
                 if key not in data:
-                    _agent_trace_record(agent_id, False, "missing_keys")
+                    _agent_trace_record(agent_id, False, "missing_keys", usage)
                     return None
         conf_limit = HELPER_MIN_CONFIDENCE if min_confidence is None else min_confidence
         if "confidence" in data:
             try:
                 if float(data.get("confidence")) < conf_limit:
-                    _agent_trace_record(agent_id, False, "low_confidence")
+                    _agent_trace_record(agent_id, False, "low_confidence", usage)
                     return None
             except Exception:
-                _agent_trace_record(agent_id, False, "confidence_invalid")
+                _agent_trace_record(agent_id, False, "confidence_invalid", usage)
                 return None
-        _agent_trace_record(agent_id, True, "")
+        _agent_trace_record(agent_id, True, "", usage)
         return data
     except Exception:
         _agent_trace_record(agent_id, False, "exception")
@@ -3178,10 +3276,11 @@ def _builder_request_text(payload: Dict[str, Any], *, minimal: bool, addendum: O
     return hint + "\nCONTRACT:\n" + contract + "\n\nINPUT_JSON:\n" + json.dumps(payload, ensure_ascii=False)
 
 
-def call_builder(payload: Dict[str, Any]) -> Dict[str, Any]:
+def call_builder(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     if not BUILDER_AGENT_ID:
         raise RuntimeError("BUILDER_AGENT_ID not configured")
     url = f"{HA_URL}/api/conversation/process"
+    usage_events: List[Dict[str, Any]] = []
 
     def _post(text: str, agent_id: str) -> str:
         r = requests.post(url, headers=ha_headers(), json={"agent_id": agent_id, "text": text}, timeout=180)
@@ -3190,6 +3289,7 @@ def call_builder(payload: Dict[str, Any]) -> Dict[str, Any]:
             raise RuntimeError(f"Conversation agent '{agent_id}' failed ({r.status_code}): {detail}")
         data = r.json()
         speech = ((((data.get("response") or {}).get("speech") or {}).get("plain") or {}).get("speech") or "").strip()
+        usage_events.append(_build_usage_event(agent_id, text, speech))
         return speech
 
     def _try_parse(speech: str) -> Optional[Dict[str, Any]]:
@@ -3220,7 +3320,7 @@ def call_builder(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not _looks_like_bad_builder_output(speech):
         parsed = _try_parse(speech)
         if parsed is not None:
-            return parsed
+            return parsed, usage_events
 
     speech = _post(_builder_request_text(minimal_payload, minimal=True), BUILDER_AGENT_ID)
     if DEBUG:
@@ -3228,7 +3328,7 @@ def call_builder(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not _looks_like_bad_builder_output(speech):
         parsed = _try_parse(speech)
         if parsed is not None:
-            return parsed
+            return parsed, usage_events
 
     # Fallback to dumb builder (cheaper model)
     if DUMB_BUILDER_AGENT_ID:
@@ -3237,7 +3337,7 @@ def call_builder(payload: Dict[str, Any]) -> Dict[str, Any]:
             print("DUMB BUILDER SPEECH:", repr(speech[:600]))
         parsed = _try_parse(speech)
         if parsed is not None:
-            return parsed
+            return parsed, usage_events
 
     raise RuntimeError(f"Builder did not return JSON. Got: {speech[:250]}")
 
@@ -3351,7 +3451,7 @@ def api_admin_agent_check(x_ha_agent_secret: str = Header(default="")):
                 ),
             }
             test_text = _builder_request_text(minimal_payload, minimal=True, addendum=DUMB_BUILDER_ADDENDUM)
-            speech = call_conversation_agent(DUMB_BUILDER_AGENT_ID, test_text)
+            speech, _ = call_conversation_agent(DUMB_BUILDER_AGENT_ID, test_text)
             extracted = _extract_json_object(speech or "")
             parsed = json.loads(extracted) if extracted else None
             required = {"alias", "description", "trigger", "condition", "action", "mode", "initial_state", "helpers_needed"}
@@ -3511,6 +3611,7 @@ async def api_refresh_capabilities():
 def api_capabilities_sync(body: Dict[str, Any] = Body(default={})):
     if not (HA_URL and HA_TOKEN):
         raise HTTPException(status_code=412, detail="HA_URL/HA_TOKEN not configured")
+    trace_token = _agent_trace_start()
 
     entity_type = (body.get("entity_type") or "automation").strip().lower()
     if entity_type not in ("automation", "script"):
@@ -3605,6 +3706,7 @@ def api_capabilities_sync(body: Dict[str, Any] = Body(default={})):
     )
 
     reply = ""
+    fallback_usage = None
     if helper_out and isinstance(helper_out.get("questions"), list):
         qs = [str(q).strip() for q in helper_out.get("questions") if str(q).strip()]
         if qs:
@@ -3624,7 +3726,7 @@ def api_capabilities_sync(body: Dict[str, Any] = Body(default={})):
             f"CAPABILITIES_YAML:\n{caps_yaml}\n\n"
             f"AUTOMATION_YAML:\n{yaml_text}\n"
         )
-        reply = call_conversation_agent(ARCHITECT_AGENT_ID, prompt)
+        reply, fallback_usage = call_conversation_agent(ARCHITECT_AGENT_ID, prompt)
 
     if mapper_out:
         mapped_missing_entities = mapper_out.get("missing_entities")
@@ -3640,6 +3742,8 @@ def api_capabilities_sync(body: Dict[str, Any] = Body(default={})):
             if extra:
                 reply = (reply + "\n\nAdditional mapping questions:\n" + "\n".join(f"- {q}" for q in extra[:3])).strip()
 
+    agent_status = _agent_trace_finish(trace_token)
+    usage_events, usage_total = _collect_usage_events(fallback_usage, agent_status)
     return {
         "ok": True,
         "reply": reply,
@@ -3647,6 +3751,9 @@ def api_capabilities_sync(body: Dict[str, Any] = Body(default={})):
         "missing_services": missing_services,
         "mapper": mapper_out or {},
         "summary": summary or {},
+        "agent_status": agent_status,
+        "usage_events": usage_events,
+        "usage_total": usage_total,
     }
 
 
@@ -3655,6 +3762,7 @@ def api_capabilities_learn(body: Dict[str, Any] = Body(default={})):
     note = (body.get("text") or body.get("note") or body.get("prompt") or "").strip()
     if not note:
         raise HTTPException(status_code=400, detail="Missing note text")
+    trace_token = _agent_trace_start()
 
     entity_type = (body.get("entity_type") or "automation").strip().lower()
     if entity_type not in ("automation", "script"):
@@ -3703,6 +3811,8 @@ def api_capabilities_learn(body: Dict[str, Any] = Body(default={})):
     preview = preview_capabilities_note(note)
     confirm = bool(body.get("confirm") or body.get("commit") or False)
 
+    agent_status = _agent_trace_finish(trace_token)
+    usage_events, usage_total = _collect_usage_events(None, agent_status)
     if not confirm:
         return {
             "ok": True,
@@ -3711,6 +3821,9 @@ def api_capabilities_learn(body: Dict[str, Any] = Body(default={})):
             "intent_summary": helper_out.get("intent_summary") if isinstance(helper_out, dict) else "",
             "confidence": helper_out.get("confidence") if isinstance(helper_out, dict) else None,
             "summary": summary or {},
+            "agent_status": agent_status,
+            "usage_events": usage_events,
+            "usage_total": usage_total,
         }
 
     updated_entities, updated_scripts, updated_context, saved_notes = commit_capabilities_note(note)
@@ -3721,6 +3834,9 @@ def api_capabilities_learn(body: Dict[str, Any] = Body(default={})):
         "saved_context": updated_context,
         "saved_notes": saved_notes,
         "preview": preview,
+        "agent_status": agent_status,
+        "usage_events": usage_events,
+        "usage_total": usage_total,
     }
 
 # ----------------------------
@@ -4602,7 +4718,7 @@ def api_ai_update_automation(
     )
 
     try:
-        updated = call_conversation_agent(AI_EDIT_AGENT_ID, ai_text)
+        updated, usage = call_conversation_agent(AI_EDIT_AGENT_ID, ai_text)
     except requests.exceptions.ReadTimeout:
         raise HTTPException(status_code=504, detail="Home Assistant conversation timed out. Try again or increase HA_CONVERSATION_TIMEOUT.")
 
@@ -4621,7 +4737,8 @@ def api_ai_update_automation(
         mode="edit",
         entity_type="automation",
     )
-    return {"ok": True, "yaml": _yaml_dump(obj)}
+    usage_events, usage_total = _collect_usage_events(usage, None)
+    return {"ok": True, "yaml": _yaml_dump(obj), "usage_events": usage_events, "usage_total": usage_total}
 
 
 # ----------------------------
@@ -4669,7 +4786,7 @@ def api_ai_update_script(
     )
 
     try:
-        updated = call_conversation_agent(AI_EDIT_AGENT_ID, ai_text)
+        updated, usage = call_conversation_agent(AI_EDIT_AGENT_ID, ai_text)
     except requests.exceptions.ReadTimeout:
         raise HTTPException(status_code=504, detail="Home Assistant conversation timed out. Try again or increase HA_CONVERSATION_TIMEOUT.")
 
@@ -4687,7 +4804,8 @@ def api_ai_update_script(
         mode="edit",
         entity_type="script",
     )
-    return {"ok": True, "yaml": _yaml_dump(obj)}
+    usage_events, usage_total = _collect_usage_events(usage, None)
+    return {"ok": True, "yaml": _yaml_dump(obj), "usage_events": usage_events, "usage_total": usage_total}
 
 
 # ----------------------------
@@ -4773,7 +4891,7 @@ async def api_architect_chat(
     prompt = "\n\n".join(prompt_parts)
 
     try:
-        reply, conv_id = call_conversation_agent_full(ARCHITECT_AGENT_ID, prompt, req.conversation_id)
+        reply, conv_id, architect_usage = call_conversation_agent_full(ARCHITECT_AGENT_ID, prompt, req.conversation_id)
     except requests.exceptions.ReadTimeout:
         raise HTTPException(status_code=504, detail="Home Assistant conversation timed out. Try again or increase HA_CONVERSATION_TIMEOUT.")
 
@@ -4804,6 +4922,7 @@ async def api_architect_chat(
                 print("CAPABILITIES_UPDATE_FAILED:", repr(e))
 
     agent_status = _agent_trace_finish(trace_token)
+    usage_events, usage_total = _collect_usage_events(architect_usage, agent_status)
     return {
         "ok": True,
         "reply": reply,
@@ -4812,6 +4931,8 @@ async def api_architect_chat(
         "saved_scripts": updated_scripts,
         "saved_context": updated_context,
         "agent_status": agent_status,
+        "usage_events": usage_events,
+        "usage_total": usage_total,
     }
 
 
@@ -4889,7 +5010,7 @@ async def api_architect_finalize(
     finalize_prompt = "\n".join(finalize_parts)
 
     try:
-        final_text, conv_id = call_conversation_agent_full(ARCHITECT_AGENT_ID, finalize_prompt, req.conversation_id)
+        final_text, conv_id, architect_usage = call_conversation_agent_full(ARCHITECT_AGENT_ID, finalize_prompt, req.conversation_id)
     except requests.exceptions.ReadTimeout:
         raise HTTPException(status_code=504, detail="Home Assistant conversation timed out. Try again or increase HA_CONVERSATION_TIMEOUT.")
 
@@ -4897,7 +5018,7 @@ async def api_architect_finalize(
         raise HTTPException(status_code=500, detail="Architect did not return a final prompt")
 
     # Build config via builder agent
-    ha_config, _ = await build_ha_config_from_text(
+    ha_config, _, builder_usage = await build_ha_config_from_text(
         final_text,
         source="architect",
         current_yaml=req.current_yaml if mode == "edit" else None,
@@ -4907,6 +5028,7 @@ async def api_architect_finalize(
     note = f"architect:{final_text[:200]}".strip()
 
     agent_status = _agent_trace_finish(trace_token)
+    usage_events, usage_total = _collect_usage_events(architect_usage, agent_status, builder_usage)
     history_payload = None
     if entity_id:
         history_payload = _get_conversation_payload(_script_key(entity_id) if entity_type == "script" else entity_id)
@@ -4927,6 +5049,8 @@ async def api_architect_finalize(
                 "alias": ha_config.get("alias") or entity_id,
                 "yaml": yaml_text,
                 "agent_status": agent_status,
+                "usage_events": usage_events,
+                "usage_total": usage_total,
                 **saved_info,
             }
 
@@ -4947,6 +5071,8 @@ async def api_architect_finalize(
             "alias": ha_config.get("alias") or new_id,
             "yaml": yaml_text,
             "agent_status": agent_status,
+            "usage_events": usage_events,
+            "usage_total": usage_total,
             **saved_info,
         }
 
@@ -4963,6 +5089,8 @@ async def api_architect_finalize(
             "automation_id": out.get("automation_id", entity_id),
             "yaml": yaml_text,
             "agent_status": agent_status,
+            "usage_events": usage_events,
+            "usage_total": usage_total,
             **saved_info,
         }
 
@@ -4983,6 +5111,8 @@ async def api_architect_finalize(
             "alias": ha_config.get("alias") or new_id,
             "yaml": yaml_text,
             "agent_status": agent_status,
+            "usage_events": usage_events,
+            "usage_total": usage_total,
             **saved_info,
         }
 
@@ -5001,6 +5131,9 @@ async def api_architect_finalize(
         "automation_id": automation_id,
         "alias": ha_config.get("alias") or automation_id,
         "yaml": yaml_text,
+        "agent_status": agent_status,
+        "usage_events": usage_events,
+        "usage_total": usage_total,
     }
 
 # ----------------------------
@@ -5318,7 +5451,7 @@ def normalize_cover_actions(actions: List[Any], capabilities: Dict[str, Any]) ->
     return out
 
 
-def call_conversation_agent(agent_id: str, text: str) -> str:
+def call_conversation_agent(agent_id: str, text: str) -> Tuple[str, Dict[str, Any]]:
     url = f"{HA_URL}/api/conversation/process"
     r = requests.post(
         url,
@@ -5333,10 +5466,12 @@ def call_conversation_agent(agent_id: str, text: str) -> str:
         or (data.get("response") or {}).get("text")
         or ""
     )
-    return (speech or "").strip()
+    speech = (speech or "").strip()
+    usage = _build_usage_event(agent_id, text, speech)
+    return speech, usage
 
 
-def call_conversation_agent_full(agent_id: str, text: str, conversation_id: Optional[str] = None) -> Tuple[str, Optional[str]]:
+def call_conversation_agent_full(agent_id: str, text: str, conversation_id: Optional[str] = None) -> Tuple[str, Optional[str], Dict[str, Any]]:
     url = f"{HA_URL}/api/conversation/process"
     payload: Dict[str, Any] = {"agent_id": agent_id, "text": text}
     if conversation_id:
@@ -5359,7 +5494,9 @@ def call_conversation_agent_full(agent_id: str, text: str, conversation_id: Opti
         or (data.get("response") or {}).get("conversation_id")
         or conversation_id
     )
-    return (speech or "").strip(), conv_id
+    speech = (speech or "").strip()
+    usage = _build_usage_event(agent_id, text, speech)
+    return speech, conv_id, usage
 
 
 # ----------------------------
@@ -5436,7 +5573,7 @@ def announce(msg: str) -> None:
                 "Rules: sound human, no swearing, no emojis, no slurs, no personal details.\n"
                 f"CONTEXT:\n{msg}"
             )
-            generated = call_conversation_agent(CONFIRM_AGENT_ID, prompt)
+            generated, _ = call_conversation_agent(CONFIRM_AGENT_ID, prompt)
             if generated:
                 final_msg = generated
         except Exception:
@@ -5462,7 +5599,7 @@ async def build_ha_config_from_text(
     source: str = "ui",
     current_yaml: Optional[str] = None,
     entity_type: str = "automation",
-) -> Tuple[Dict[str, Any], Dict[str, str]]:
+) -> Tuple[Dict[str, Any], Dict[str, str], List[Dict[str, Any]]]:
     capabilities = load_capabilities()
 
     entity_registry, device_registry, area_registry, states = await ha_ws_fetch()
@@ -5527,7 +5664,7 @@ async def build_ha_config_from_text(
         prompt["current_yaml"] = current_yaml
 
     try:
-        out = call_builder(prompt)
+        out, builder_usage = call_builder(prompt)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
     if not isinstance(out, dict):
@@ -5552,7 +5689,7 @@ async def build_ha_config_from_text(
         script_config["sequence"] = normalize_speech_actions(script_config.get("sequence", []), capabilities)
         script_config["sequence"] = normalize_cover_actions(script_config.get("sequence", []), capabilities)
         script_config["sequence"] = normalize_tv_power_actions(script_config.get("sequence", []), capabilities)
-        return script_config, placeholder_map
+        return script_config, placeholder_map, builder_usage
 
     ha_config = {
         "alias": apply_ai_alias_prefix(out.get("alias", "AI Automation"), capabilities, mode=mode, entity_type="automation"),
@@ -5572,7 +5709,7 @@ async def build_ha_config_from_text(
     ha_config["action"] = normalize_cover_actions(ha_config.get("action", []), capabilities)
     ha_config["action"] = normalize_tv_power_actions(ha_config.get("action", []), capabilities)
 
-    return ha_config, placeholder_map
+    return ha_config, placeholder_map, builder_usage
 
 # ----------------------------
 # FASTAPI ENDPOINT: builder
@@ -5585,17 +5722,20 @@ async def automation_builder(req: BuildReq, x_ha_agent_secret: str = Header(defa
         raise HTTPException(status_code=500, detail="Server not configured")
 
     try:
-        ha_config, placeholder_map = await build_ha_config_from_text(req.text, source=req.source or "ui")
+        ha_config, placeholder_map, builder_usage = await build_ha_config_from_text(req.text, source=req.source or "ui")
 
         automation_id = create_or_update_automation(ha_config)
 
         announce(f"Automation created: {ha_config['alias']}. {ha_config.get('description','')}".strip())
 
+        usage_events, usage_total = _collect_usage_events(None, None, builder_usage)
         return {
             "ok": True,
             "automation_id": automation_id,
             "alias": ha_config["alias"],
             "helpers_allocated": placeholder_map,
+            "usage_events": usage_events,
+            "usage_total": usage_total,
         }
 
     except Exception as e:
