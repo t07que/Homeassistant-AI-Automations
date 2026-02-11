@@ -51,6 +51,11 @@ if [ -z "$RUNTIME_CONFIG_FILE" ]; then
   RUNTIME_CONFIG_FILE="/data/runtime_config.json"
 fi
 
+CAPABILITIES_FILE="$(bashio::config 'capabilities_file')"
+if [ -z "$CAPABILITIES_FILE" ]; then
+  CAPABILITIES_FILE="/data/capabilities.yaml"
+fi
+
 AGENT_SECRET="$(bashio::config 'agent_secret')"
 
 export STATIC_DIR
@@ -64,6 +69,7 @@ export AUTOMATIONS_VERSIONS_DIR
 export LOCAL_DB_FILE
 export SUMMARY_CACHE_FILE
 export RUNTIME_CONFIG_FILE
+export CAPABILITIES_FILE
 
 mkdir -p "$AUTOMATIONS_VERSIONS_DIR"
 if [ ! -f "$LOCAL_DB_FILE" ]; then

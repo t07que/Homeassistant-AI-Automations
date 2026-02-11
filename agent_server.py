@@ -382,7 +382,7 @@ HA_REQUEST_TIMEOUT = _env_int("HA_REQUEST_TIMEOUT", 60)
 HA_CONVERSATION_TIMEOUT = _env_int("HA_CONVERSATION_TIMEOUT", 180)
 
 HELPER_MAP_FILE = "helper_map.json"
-CAPABILITIES_FILE = "capabilities.yaml"
+CAPABILITIES_FILE = _clean_env_value(os.getenv("CAPABILITIES_FILE")) or "capabilities.yaml"
 
 # Local UI + versions
 AUTOMATION_VERSIONS_DIR = _clean_env_value(os.getenv("AUTOMATION_VERSIONS_DIR")) or AUTOMATIONS_VERSIONS_DIR

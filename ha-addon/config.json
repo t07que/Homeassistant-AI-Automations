@@ -29,6 +29,7 @@
     "local_db_file": "/data/local_automations_db.json",
     "summary_cache_file": "/data/summary_cache.json",
     "runtime_config_file": "/data/runtime_config.json",
+    "capabilities_file": "/data/capabilities.yaml",
     "static_dir": "/app/static"
   },
   "schema": {
@@ -42,6 +43,7 @@
     "local_db_file": "str?",
     "summary_cache_file": "str?",
     "runtime_config_file": "str?",
+    "capabilities_file": "str?",
     "static_dir": "str?"
   }
 }

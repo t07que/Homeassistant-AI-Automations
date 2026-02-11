@@ -17,12 +17,13 @@ This folder contains a Home Assistant add-on wrapper for the Automation Studio U
 - `automations_path` (defaults to `/config/automations.yaml`)
 - `scripts_path` (defaults to `/config/scripts.yaml`)
 - `restore_state_path` (defaults to `/config/.storage/core.restore_state`)
+- `capabilities_file` (defaults to `/data/capabilities.yaml`)
 
 No personal data or API keys are stored in the repo files. Set secrets only in the add-on configuration.
 
 ## Capabilities file
 `capabilities.yaml` is the user-specific knowledge base and normalization map.
-Start from `capabilities.example.yaml` and fill in your own entity IDs.
+Start from `capabilities.example.yaml` and copy it to `/data/capabilities.yaml` (or edit in the UI).
 
 Key sections used by the engine:
 - `media.power_toggle_rules` (rewrite power on/off to a script toggle).

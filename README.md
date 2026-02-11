@@ -21,6 +21,7 @@ Automation Studio is a local-first UI and API that helps you build, edit, and ma
    set AUTOMATIONS_FILE_PATH=/config/automations.yaml
    set SCRIPTS_FILE_PATH=/config/scripts.yaml
    set RESTORE_STATE_PATH=/config/.storage/core.restore_state
+   set CAPABILITIES_FILE=capabilities.yaml
    ```
 3. Start the server:
    ```bash
