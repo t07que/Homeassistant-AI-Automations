@@ -71,6 +71,8 @@ export SUMMARY_CACHE_FILE
 export RUNTIME_CONFIG_FILE
 export CAPABILITIES_FILE
 
+cd /app
+
 mkdir -p "$AUTOMATIONS_VERSIONS_DIR"
 if [ ! -f "$LOCAL_DB_FILE" ]; then
   echo '{}' > "$LOCAL_DB_FILE"

@@ -7,14 +7,15 @@ RUN apk add --no-cache python3 py3-pip py3-virtualenv bash \
   && python3 -m venv /opt/venv \
   && /opt/venv/bin/pip install --no-cache-dir --upgrade pip
 
-COPY automation_studio/requirements.txt /tmp/requirements.txt
+COPY requirements.txt /tmp/requirements.txt
 RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
 
 WORKDIR /app
-COPY . /app
+COPY app/ /app/
+COPY run.sh /app/run.sh
 
 ENV PATH="/opt/venv/bin:$PATH"
 
-RUN chmod +x /app/automation_studio/run.sh
+RUN chmod +x /app/run.sh
 
-CMD ["/app/automation_studio/run.sh"]
+CMD ["/app/run.sh"]
