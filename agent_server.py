@@ -16,7 +16,7 @@ import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Query, Body, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse, FileResponse
+from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 from pathlib import Path
 import datetime
@@ -107,12 +107,22 @@ def debug_ui():
         "files": [p.name for p in STATIC_PATH.iterdir()] if STATIC_PATH.is_dir() else [],
     }
 
+@app.get("/__debug/headers", include_in_schema=False)
+def debug_headers(request: Request):
+    headers = {k: v for k, v in request.headers.items()}
+    return {
+        "ingress_base": _ingress_base_path(request),
+        "headers": headers,
+    }
+
 def _ingress_base_path(request: Request) -> str:
     # Home Assistant ingress sends the base path in headers when proxying.
     ingress = (
         request.headers.get("X-Ingress-Path")
         or request.headers.get("X-Forwarded-Path")
         or request.headers.get("X-Forwarded-Prefix")
+        or request.headers.get("X-Forwarded-Uri")
+        or request.headers.get("X-Original-Uri")
     )
     if ingress:
         return ingress.rstrip("/")
@@ -122,12 +132,19 @@ def _ingress_base_path(request: Request) -> str:
 @app.get("/", include_in_schema=False)
 def root(request: Request):
     index_path = STATIC_PATH / "index.html"
-    if index_path.exists():
-        return FileResponse(index_path)
+    if not index_path.exists():
+        return HTMLResponse("<h1>UI index missing</h1>", status_code=500)
+
     base = _ingress_base_path(request)
-    if base:
-        return RedirectResponse(url=f"{base}/static/")
-    return RedirectResponse(url="static/")
+    base_href = f"{base}/" if base else "/"
+    try:
+        html = index_path.read_text(encoding="utf-8")
+    except Exception:
+        return FileResponse(index_path)
+
+    if "<base " not in html:
+        html = html.replace("<head>", f"<head>\n  <base href=\"{base_href}\">", 1)
+    return HTMLResponse(html)
 
 # Static assets
 app.mount("/static", StaticFiles(directory=str(STATIC_PATH), html=False), name="static")
