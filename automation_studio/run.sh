@@ -1,5 +1,7 @@
-﻿#!/usr/bin/with-contenv bashio
+#!/usr/bin/env bash
 set -e
+
+source /usr/lib/bashio/bashio.sh
 
 STATIC_DIR="$(bashio::config 'static_dir')"
 if [ -z "$STATIC_DIR" ]; then
