@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>HA Auto Agent - Automation Studio</title>
+  <link rel="stylesheet" href="./style.css?v=20260210b" />
+
+  <!-- CodeMirror (YAML editor) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
+
+  <!-- js-yaml (client-side validation) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+</head>
+
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">HA</div>
+        <div>
+          <div class="title">Automation Studio</div>
+          <div class="subtitle">AI Auto Automation Builder</div>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="pill" id="connPill">
+          <span class="dot" id="connDot"></span>
+          <span id="connText">Connecting...</span>
+        </div>
+
+        <button class="btn ghost" id="settingsBtn" title="Settings">Settings</button>
+        <button class="btn" id="refreshBtn" title="Reload list">Refresh</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <div class="sidebar-top">
+            <div class="sidebar-tabs" role="tablist" aria-label="Entity type">
+              <button class="tab active" id="tabAutomations" type="button" role="tab" aria-selected="true" aria-controls="automationList" tabindex="0">Automations</button>
+              <button class="tab" id="tabScripts" type="button" role="tab" aria-selected="false" aria-controls="automationList" tabindex="-1">Scripts</button>
+            </div>
+          </div>
+          <div class="search">
+            <input id="searchInput" type="search" name="automation_search" placeholder="Search automations (alias/desc/id)..." autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" />
+            <button class="btn tiny ghost" id="hideDisabledToggleBtn" type="button" aria-pressed="false">Hide disabled</button>
+            <button class="iconbtn" id="clearSearchBtn" title="Clear">x</button>
+          </div>
+
+          <div class="setup-banner" id="setupBanner" hidden>
+            <div class="setup-title">Automations file path not configured</div>
+            <div class="muted">Set AUTOMATIONS_FILE_PATH to your UNC path and restart the server.</div>
+            <button class="btn" id="openSettingsBtn" type="button">Open settings</button>
+          </div>
+        </div>
+
+        <div class="list" id="automationList" role="tabpanel" aria-labelledby="tabAutomations">
+          <div class="empty">Loading...</div>
+        </div>
+
+        <button class="fab" id="newEntityBtn" title="New automation" aria-label="New automation">+</button>
+      </aside>
+
+      <main class="main">
+        <section class="panel" id="detailsPanel">
+          <div class="panel-head">
+            <div class="panel-title">
+              <div class="h1" id="aTitle">Select an automation</div>
+              <div class="meta" id="aMeta">Pick one from the list on the left.</div>
+            </div>
+
+            <div class="panel-actions">
+              <div class="panel-layout-toggle">
+                <span class="panel-layout-label">Panels</span>
+                <button class="btn ghost panel-btn" data-toggle-sidebar title="Hide list">Hide list</button>
+                <button class="btn ghost panel-btn" data-toggle-rail title="Hide right panel">Hide right panel</button>
+              </div>
+              <button class="btn ghost panel-btn" id="capabilitiesBtn" type="button" aria-pressed="false" title="View capabilities knowledgebase">Knowledgebase</button>
+              <button class="btn ghost panel-btn" id="capabilitiesRefreshBtn" type="button" title="Refresh capabilities from Home Assistant" hidden>Refresh KB</button>
+              <button class="btn ghost panel-btn" id="capabilitiesSyncBtn" type="button" title="Update the knowledgebase from this automation">Update KB from this automation</button>
+              <button class="btn ghost panel-btn" id="capabilitiesLearnBtn" type="button" title="Add a knowledgebase note">Add to KB</button>
+              <button class="btn primary panel-btn" id="saveBtn" disabled>Save</button>
+            </div>
+          </div>
+
+          <div class="tab-strip">
+            <div class="tab-strip-tabs" id="tabStrip"></div>
+          </div>
+
+          <div class="panel-subhead">
+            <div class="panel-subleft">
+              <div class="seg" role="tablist" aria-label="View mode">
+                <button class="segbtn active" id="viewYamlBtn" type="button">YAML</button>
+                <button class="segbtn" id="viewVisualBtn" type="button">Visual</button>
+              </div>
+
+              <div class="seg" role="tablist" aria-label="Editor view">
+                <button class="segbtn active" id="compareCurrentBtn" type="button">Live</button>
+                <button class="segbtn" id="compareVersionBtn" type="button" disabled>Version</button>
+              </div>
+            </div>
+
+            <div class="panel-subright">
+              <button class="btn" id="copyBtn" disabled>Copy YAML</button>
+              <button class="btn" id="toggleEnableBtn" disabled>Disable</button>
+            </div>
+          </div>
+
+            <div class="panel-body">
+              <div class="editor-column">
+                <div class="editor-wrap resizable-section" data-size-id="editor">
+                  <div id="yamlView">
+                    <textarea id="yamlTextarea" spellcheck="false"></textarea>
+                </div>
+                <div id="visualView" class="visual-view" aria-hidden="true"></div>
+              </div>
+
+              <div class="row-splitter ai-toggle-bar" id="editorSplitter" title="Drag to resize sections">
+                <div class="row-splitter-grip" aria-hidden="true"></div>
+                <button class="btn ghost ai-toggle-btn" id="aiSectionToggleBtn" type="button">Hide AI</button>
+              </div>
+              <div class="ai-row" id="aiRow">
+                <div class="card ai-panel">
+                  <div class="card-title">
+                    <span>Consult with the architect...</span>
+                  </div>
+                  <div class="card-body">
+                    <textarea id="aiPrompt" placeholder="e.g. Add a 30 min bedtime window, and do not announce if I am already in bed..."></textarea>
+
+                    <div style="height:10px"></div>
+                    <div class="ai-status" id="aiStatus" aria-live="polite" data-output="aiOutput">
+                      <span class="ai-status-icon"></span>
+                      <span class="ai-status-text"></span>
+                    </div>
+
+                    <div class="muted" style="margin-top:10px">
+                      Plan changes with the Architect, then finalize to build an automation or script. The editor updates after build.
+                    </div>
+
+                    <div class="ai-actions">
+                      <button class="btn full" id="aiPlanBtn" disabled>Plan changes</button>
+                      <button class="btn full primary" id="aiFinalizeBtn" disabled>Finalize and build</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ai-output-slot" id="aiOutputSlot">
+                  <div class="card ai-output-card" id="aiOutputCard">
+                    <div class="card-title">
+                      <span>Architect feedback</span>
+                      <div class="card-title-actions">
+                        <button class="card-toggle" id="aiResetHistoryBtn" title="Reset conversation history">Reset history</button>
+                        <button class="card-toggle" id="aiExpandBtn" title="Expand">Expand</button>
+                      </div>
+                    </div>
+                    <div class="card-body">
+                      <div class="ai-output" id="aiOutput"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              </div>
+
+              <div class="panel-splitter" id="panelSplitter" title="Drag to resize columns"></div>
+              <div class="right-rail" id="rightRail">
+                <div class="card log-card resizable-section" data-card="activity" data-section="activity" data-size-id="activity">
+                  <div class="card-title">
+                    <span>Activity</span>
+                    <button class="card-toggle" data-toggle="activity">Hide</button>
+                  </div>
+                  <div class="card-body">
+                    <div class="log" id="logBox"></div>
+                  </div>
+                </div>
+
+                <div class="card resizable-section" data-card="versions" data-section="versions" data-size-id="versions">
+                  <div class="card-title">
+                    <span>Versions</span>
+                    <button class="card-toggle" data-toggle="versions">Hide</button>
+                  </div>
+                  <div class="card-body">
+                    <div class="version-actions">
+                      <button class="btn" id="loadVersionBtn" disabled>Load in editor</button>
+                      <button class="btn danger" id="applyVersionBtn" disabled>Restore version</button>
+                    </div>
+                    <div class="muted" style="margin-top:8px">Select a version to compare and restore.</div>
+                    <div class="version-list" id="versionList"></div>
+                    <div class="muted" style="margin-top:12px">Semantic diff (current vs selected)</div>
+                    <div class="diff" id="diffBox"></div>
+                  </div>
+                </div>
+
+                <div class="card resizable-section" data-card="health" data-section="health" data-size-id="health">
+                  <div class="card-title">
+                    <span>Health</span>
+                    <button class="card-toggle" data-toggle="health">Hide</button>
+                  </div>
+                  <div class="card-body">
+                    <div class="health-panel" id="healthPanel"></div>
+                  </div>
+                </div>
+
+                <div class="card resizable-section" data-card="scenario" data-section="scenario" data-size-id="scenario">
+                  <div class="card-title">
+                    <span>Test scenario</span>
+                    <button class="card-toggle" data-toggle="scenario">Hide</button>
+                  </div>
+                  <div class="card-body">
+                    <div class="scenario-controls">
+                      <label class="scenario-label">
+                        Time
+                        <input id="scenarioTime" type="time" step="1" />
+                      </label>
+                      <div class="muted" style="margin-top:6px">Overrides (one per line): <code>entity_id = state</code></div>
+                      <textarea id="scenarioOverrides" class="scenario-input" placeholder="binary_sensor.hallway_motion = on&#10;input_select.jack_location = Bedroom"></textarea>
+                      <button class="btn" id="runScenarioBtn" type="button">Run test</button>
+                    </div>
+                    <div class="scenario-output" id="scenarioOutput"></div>
+                  </div>
+                </div>
+              </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- CREATE MODAL -->
+    <div class="modal" id="createModal" aria-hidden="true">
+      <div class="modal-backdrop" data-close="createModal"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="createTitle">
+        <div class="modal-head">
+          <div>
+            <div class="modal-title" id="createTitle">Create a new automation</div>
+            <div class="modal-subtitle" id="createSubtitle">Chat with the Architect to refine details, then finalize and build.</div>
+          </div>
+          <button class="iconbtn" data-close="createModal" title="Close">x</button>
+        </div>
+        <div class="modal-body">
+          <textarea id="promptText" class="modal-textarea" placeholder="e.g. When sleep_time turns on, remind me to set an alarm..."></textarea>
+          <div class="muted" id="createTip">Tip: be specific about entities, times, and preferred scripts (Alexa occupied-room, phone notify, etc).</div>
+
+          <div style="height:12px"></div>
+          <div class="ai-output modal-output" id="createOutput"></div>
+          <div class="ai-status" id="createStatus" aria-live="polite" data-output="createOutput">
+            <span class="ai-status-icon"></span>
+            <span class="ai-status-text"></span>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" data-close="createModal">Cancel</button>
+          <button class="btn primary" id="createFinalizeBtn" disabled>Finalize and build</button>
+          <button class="btn" id="runPromptBtn">Plan changes</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ARCHITECT OUTPUT EXPAND -->
+    <div class="modal" id="architectModal" aria-hidden="true">
+      <div class="modal-backdrop" data-close="architectModal"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="architectTitle">
+        <div class="modal-head">
+          <div>
+            <div class="modal-title" id="architectTitle">Architect feedback</div>
+            <div class="modal-subtitle">Review the Architect's plan, then refine or finalize.</div>
+          </div>
+          <button class="iconbtn" data-close="architectModal" title="Close">x</button>
+        </div>
+        <div class="modal-body">
+          <div class="ai-output modal-output" id="architectOutputExpanded"></div>
+          <div class="ai-status" id="aiStatusExpanded" aria-live="polite" data-output="architectOutputExpanded">
+            <span class="ai-status-icon"></span>
+            <span class="ai-status-text"></span>
+          </div>
+          <div style="height:12px"></div>
+          <textarea id="aiPromptExpanded" class="modal-textarea" placeholder="Add your next change request..."></textarea>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" data-close="architectModal">Close</button>
+          <button class="btn" id="aiPlanBtnExpanded">Plan changes</button>
+          <button class="btn primary" id="aiFinalizeBtnExpanded">Finalize and build</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- KB SYNC MODAL -->
+    <div class="modal" id="kbSyncModal" aria-hidden="true">
+      <div class="modal-backdrop" data-close="kbSyncModal"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="kbSyncTitle">
+        <div class="modal-head">
+          <div>
+            <div class="modal-title" id="kbSyncTitle">Update knowledgebase</div>
+            <div class="modal-subtitle" id="kbSyncSubtitle">Ask which part to add and what it does.</div>
+          </div>
+          <button class="iconbtn" data-close="kbSyncModal" title="Close">x</button>
+        </div>
+        <div class="modal-body">
+          <div class="muted" id="kbSyncAutomationLabel">Current: -</div>
+          <div style="height:12px"></div>
+          <textarea id="kbSyncPrompt" class="modal-textarea" placeholder="e.g. Add the 'Bedtime routine' part: it turns off lights and arms alarm when everyone is asleep."></textarea>
+          <div style="height:12px"></div>
+          <div class="ai-output modal-output" id="kbSyncOutput"></div>
+          <div class="ai-status" id="kbSyncStatus" aria-live="polite" data-output="kbSyncOutput">
+            <span class="ai-status-icon"></span>
+            <span class="ai-status-text"></span>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" data-close="kbSyncModal">Close</button>
+          <button class="btn primary" id="kbSyncRunBtn">Ask KB Agent</button>
+          <button class="btn" id="kbSyncSaveBtn">Save to KB</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONFIRM MODAL -->
+    <div class="modal" id="confirmModal" aria-hidden="true">
+      <div class="modal-backdrop" data-close="confirmModal"></div>
+      <div class="modal-card small" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <div class="modal-head">
+          <div>
+            <div class="modal-title" id="confirmTitle">Confirm</div>
+            <div class="modal-subtitle" id="confirmSubtitle">Please confirm this action.</div>
+          </div>
+          <button class="iconbtn" data-close="confirmModal" title="Close">x</button>
+        </div>
+        <div class="modal-body">
+          <div class="confirm-message" id="confirmMessage"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" id="confirmCancelBtn" data-close="confirmModal">Cancel</button>
+          <button class="btn ghost" id="confirmAltBtn" hidden>Secondary</button>
+          <button class="btn primary" id="confirmOkBtn">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS MODAL -->
+    <div class="modal" id="settingsModal" aria-hidden="true">
+      <div class="modal-backdrop" data-close="settingsModal"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="modal-head">
+          <div>
+            <div class="modal-title" id="settingsTitle">Settings</div>
+            <div class="modal-subtitle">Personalize the editor and configure your connection.</div>
+          </div>
+          <button class="iconbtn" data-close="settingsModal" title="Close">x</button>
+        </div>
+
+        <div class="modal-body">
+          <label class="label">Agent secret (optional)</label>
+          <input id="settingsAgentSecret" class="textinput" type="password" placeholder="X-HA-AGENT-SECRET" />
+
+          <div style="height:12px"></div>
+
+          <label class="label">Automations file path (UNC)</label>
+          <input id="settingsFilePath" class="textinput" type="text" placeholder="\\\\192.168.4.115\\config\\automations.yaml" />
+          <div class="muted" style="margin-top:8px">
+            Set <code>AUTOMATIONS_FILE_PATH</code> in <code>.env</code> (scripts.yaml is assumed in the same folder), then restart the server.
+          </div>
+          <div style="height:8px"></div>
+          <button class="btn" id="copyEnvBtn" type="button">Copy env line</button>
+
+          <div style="height:16px"></div>
+
+          <label class="label">Default view</label>
+          <select id="settingsViewMode" class="select">
+            <option value="yaml">YAML</option>
+            <option value="visual">Visual</option>
+          </select>
+
+          <div style="height:12px"></div>
+
+          <label class="label">Default editor view</label>
+          <select id="settingsCompareTarget" class="select">
+            <option value="current">Live</option>
+            <option value="version">Previous version</option>
+          </select>
+
+          <div style="height:12px"></div>
+
+            <label class="check"><input type="checkbox" id="settingsCompactList"> Compact list</label>
+            <label class="check"><input type="checkbox" id="settingsAutoOpen"> Auto-open newly created automation/script</label>
+            <label class="check"><input type="checkbox" id="settingsInvertEnter"> Invert Enter to send (use Shift/Ctrl+Enter)</label>
+
+          <div style="height:16px"></div>
+          <div class="muted">AI optimizations</div>
+          <div style="height:8px"></div>
+          <label class="check"><input type="checkbox" id="settingsTryLocalEdit"> Try local edit first</label>
+          <label class="check"><input type="checkbox" id="settingsAllowAiDiff"> Allow AI semantic diff</label>
+          <label class="label" style="margin-top:10px">Helper min confidence</label>
+          <div class="input-row">
+            <input id="settingsHelperConfidence" class="textinput" type="number" min="0" max="1" step="0.05" />
+            <div class="muted">0.0–1.0</div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn ghost" id="resetLayoutBtn">Reset view</button>
+          <button class="btn" data-close="settingsModal">Close</button>
+          <button class="btn primary" id="saveSettingsBtn">Save settings</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/diff/5.2.0/diff.min.js"></script>
+  <script src="./app.js?v=20260210b"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local config / secrets
+.env
+*.env
+AGENT_SECRET
+
+# Local data
+capabilities.yaml
+local_automations_db.json
+helper_map.json
+summary_cache.json
+runtime_config.json
+automations.yaml
+scripts.yaml
+
+# Generated / runtime folders
+automation_versions/
+versions/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log

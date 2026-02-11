@@ -1,0 +1,3 @@
+ADDENDUM (only for gpt-4o-mini fallback):
+If any detail is uncertain, keep changes minimal, avoid guesses, and use placeholders rather than inventing entity_ids.
+Prefer preserving the current YAML structure.

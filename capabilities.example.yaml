@@ -1,0 +1,44 @@
+version: 1.0
+language:
+  locale: en_US
+conventions:
+  automation_alias_prefix: "AUTO AI GENERATED - "
+  prefer_groups_over_areas: true
+lights:
+  prefer_groups: true
+  area_aliases: {}
+  area_group_map:
+    Living Room: light.living_room_lights
+speech:
+  say_script: script.announce_to_room
+  say_field: message
+  prompt_script: script.ask_user
+  prompt_field: prompt
+  default_mode: say
+  rewrite_non_mobile_notify_to_speech: true
+notifications:
+  primary_phone_notify: notify.mobile_app_my_phone
+  keep_notify_prefixes:
+    - notify.mobile_app_
+  actionable_event_type: mobile_app_notification_action
+media:
+  power_toggle_rules:
+    - name: living_room_tv
+      script: script.living_room_tv_power_toggle
+      match_entities:
+        - media_player.living_room_tv
+        - switch.living_room_tv_power
+covers:
+  position_rules:
+    - name: kitchen_blinds
+      entity_id: cover.kitchen_blinds
+      open_position: 50
+      closed_position: 1
+scripts:
+  - entity_id: script.announce_to_room
+    purpose: "Speaks a message on the best speaker."
+learned_context:
+  entities:
+    todo: []
+    calendar: []
+  hints: []

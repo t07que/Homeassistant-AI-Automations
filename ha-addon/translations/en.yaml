@@ -1,0 +1,36 @@
+name: "Automation Studio"
+description: "AI Auto Automation Builder UI and API"
+options:
+  ha_url:
+    name: "Home Assistant URL"
+    description: "Defaults to http://supervisor/core. Override if you run HA on another host."
+  ha_token:
+    name: "Home Assistant token"
+    description: "Optional. Leave blank to use the Supervisor token."
+  agent_secret:
+    name: "Agent secret"
+    description: "Optional shared secret for API calls."
+  automations_path:
+    name: "Automations path"
+    description: "Path to automations.yaml inside HA (/config/automations.yaml by default)."
+  scripts_path:
+    name: "Scripts path"
+    description: "Path to scripts.yaml inside HA (/config/scripts.yaml by default)."
+  restore_state_path:
+    name: "Restore state path"
+    description: "Path to core.restore_state (defaults to /config/.storage/core.restore_state)."
+  versions_dir:
+    name: "Versions directory"
+    description: "Where local snapshots are stored (/data/versions by default)."
+  local_db_file:
+    name: "Local DB file"
+    description: "Local automation database file (/data/local_automations_db.json by default)."
+  summary_cache_file:
+    name: "Summary cache file"
+    description: "Cached summaries for AI helpers (/data/summary_cache.json by default)."
+  runtime_config_file:
+    name: "Runtime config file"
+    description: "Runtime settings for helper confidence and diff mode (/data/runtime_config.json by default)."
+  static_dir:
+    name: "Static UI directory"
+    description: "Path to UI assets inside the container (/app/static by default)."

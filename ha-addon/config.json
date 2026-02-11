@@ -1,0 +1,47 @@
+﻿{
+  "name": "Automation Studio",
+  "version": "0.1.0",
+  "slug": "automation_studio",
+  "description": "AI Auto Automation Builder UI and API",
+  "arch": ["amd64", "aarch64", "armv7", "armhf", "i386"],
+  "startup": "application",
+  "boot": "auto",
+  "homeassistant_api": true,
+  "ingress": true,
+  "ingress_port": 8124,
+  "panel_icon": "mdi:robot",
+  "panel_title": "Automation Studio",
+  "ports": {
+    "8124/tcp": 8124
+  },
+  "ports_description": {
+    "8124/tcp": "Automation Studio UI"
+  },
+  "map": ["config:rw", "share:rw"],
+  "options": {
+    "ha_url": "http://supervisor/core",
+    "ha_token": "",
+    "agent_secret": "",
+    "automations_path": "/config/automations.yaml",
+    "scripts_path": "/config/scripts.yaml",
+    "restore_state_path": "/config/.storage/core.restore_state",
+    "versions_dir": "/data/versions",
+    "local_db_file": "/data/local_automations_db.json",
+    "summary_cache_file": "/data/summary_cache.json",
+    "runtime_config_file": "/data/runtime_config.json",
+    "static_dir": "/app/static"
+  },
+  "schema": {
+    "ha_url": "str?",
+    "ha_token": "str?",
+    "agent_secret": "str?",
+    "automations_path": "str?",
+    "scripts_path": "str?",
+    "restore_state_path": "str?",
+    "versions_dir": "str?",
+    "local_db_file": "str?",
+    "summary_cache_file": "str?",
+    "runtime_config_file": "str?",
+    "static_dir": "str?"
+  }
+}
