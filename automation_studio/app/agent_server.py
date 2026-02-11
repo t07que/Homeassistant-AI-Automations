@@ -1906,6 +1906,9 @@ def _save_runtime_config(cfg: Dict[str, Any]) -> None:
 
 def _apply_runtime_config(cfg: Dict[str, Any]) -> None:
     global HELPER_MIN_CONFIDENCE, ALLOW_AI_DIFF
+    global BUILDER_AGENT_ID, ARCHITECT_AGENT_ID, SUMMARY_AGENT_ID
+    global CAPABILITY_MAPPER_AGENT_ID, SEMANTIC_DIFF_AGENT_ID, KB_SYNC_HELPER_AGENT_ID
+    global DUMB_BUILDER_AGENT_ID, AI_EDIT_AGENT_ID
     if not isinstance(cfg, dict):
         return
     if "helper_min_confidence" in cfg:
@@ -1917,6 +1920,21 @@ def _apply_runtime_config(cfg: Dict[str, Any]) -> None:
             pass
     if "allow_ai_diff" in cfg:
         ALLOW_AI_DIFF = bool(cfg.get("allow_ai_diff"))
+
+    def _apply_agent(key: str, current: str) -> str:
+        if key not in cfg:
+            return current
+        val = cfg.get(key)
+        return str(val or "").strip()
+
+    BUILDER_AGENT_ID = _apply_agent("builder_agent_id", BUILDER_AGENT_ID)
+    ARCHITECT_AGENT_ID = _apply_agent("architect_agent_id", ARCHITECT_AGENT_ID)
+    SUMMARY_AGENT_ID = _apply_agent("summary_agent_id", SUMMARY_AGENT_ID)
+    CAPABILITY_MAPPER_AGENT_ID = _apply_agent("capability_mapper_agent_id", CAPABILITY_MAPPER_AGENT_ID)
+    SEMANTIC_DIFF_AGENT_ID = _apply_agent("semantic_diff_agent_id", SEMANTIC_DIFF_AGENT_ID)
+    KB_SYNC_HELPER_AGENT_ID = _apply_agent("kb_sync_helper_agent_id", KB_SYNC_HELPER_AGENT_ID)
+    DUMB_BUILDER_AGENT_ID = _apply_agent("dumb_builder_agent_id", DUMB_BUILDER_AGENT_ID)
+    AI_EDIT_AGENT_ID = BUILDER_AGENT_ID
 
 
 _apply_runtime_config(_load_runtime_config())
@@ -3364,6 +3382,13 @@ def api_admin_runtime_get(x_ha_agent_secret: str = Header(default="")):
         "ok": True,
         "helper_min_confidence": HELPER_MIN_CONFIDENCE,
         "allow_ai_diff": ALLOW_AI_DIFF,
+        "builder_agent_id": BUILDER_AGENT_ID,
+        "architect_agent_id": ARCHITECT_AGENT_ID,
+        "summary_agent_id": SUMMARY_AGENT_ID,
+        "capability_mapper_agent_id": CAPABILITY_MAPPER_AGENT_ID,
+        "semantic_diff_agent_id": SEMANTIC_DIFF_AGENT_ID,
+        "kb_sync_helper_agent_id": KB_SYNC_HELPER_AGENT_ID,
+        "dumb_builder_agent_id": DUMB_BUILDER_AGENT_ID,
     }
 
 @app.post("/api/admin/runtime")
@@ -3375,6 +3400,13 @@ def api_admin_runtime_set(
     cfg = {
         "helper_min_confidence": HELPER_MIN_CONFIDENCE,
         "allow_ai_diff": ALLOW_AI_DIFF,
+        "builder_agent_id": BUILDER_AGENT_ID,
+        "architect_agent_id": ARCHITECT_AGENT_ID,
+        "summary_agent_id": SUMMARY_AGENT_ID,
+        "capability_mapper_agent_id": CAPABILITY_MAPPER_AGENT_ID,
+        "semantic_diff_agent_id": SEMANTIC_DIFF_AGENT_ID,
+        "kb_sync_helper_agent_id": KB_SYNC_HELPER_AGENT_ID,
+        "dumb_builder_agent_id": DUMB_BUILDER_AGENT_ID,
     }
     if "helper_min_confidence" in body:
         try:
@@ -3385,6 +3417,17 @@ def api_admin_runtime_set(
             pass
     if "allow_ai_diff" in body:
         cfg["allow_ai_diff"] = bool(body.get("allow_ai_diff"))
+    for key in [
+        "builder_agent_id",
+        "architect_agent_id",
+        "summary_agent_id",
+        "capability_mapper_agent_id",
+        "semantic_diff_agent_id",
+        "kb_sync_helper_agent_id",
+        "dumb_builder_agent_id",
+    ]:
+        if key in body:
+            cfg[key] = str(body.get(key) or "").strip()
 
     _apply_runtime_config(cfg)
     _save_runtime_config(cfg)
@@ -3392,7 +3435,23 @@ def api_admin_runtime_set(
         "ok": True,
         "helper_min_confidence": HELPER_MIN_CONFIDENCE,
         "allow_ai_diff": ALLOW_AI_DIFF,
+        "builder_agent_id": BUILDER_AGENT_ID,
+        "architect_agent_id": ARCHITECT_AGENT_ID,
+        "summary_agent_id": SUMMARY_AGENT_ID,
+        "capability_mapper_agent_id": CAPABILITY_MAPPER_AGENT_ID,
+        "semantic_diff_agent_id": SEMANTIC_DIFF_AGENT_ID,
+        "kb_sync_helper_agent_id": KB_SYNC_HELPER_AGENT_ID,
+        "dumb_builder_agent_id": DUMB_BUILDER_AGENT_ID,
     }
+
+@app.get("/api/admin/conversation-agents")
+def api_admin_conversation_agents(x_ha_agent_secret: str = Header(default="")):
+    require_auth(x_ha_agent_secret)
+    if not (HA_URL and HA_TOKEN):
+        raise HTTPException(status_code=412, detail="HA_URL/HA_TOKEN not configured")
+    r = requests.get(f"{HA_URL}/api/conversation/agents", headers=ha_headers(), timeout=30)
+    r.raise_for_status()
+    return r.json()
 
 # ----------------------------
 # API: Capabilities knowledgebase

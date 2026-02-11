@@ -396,7 +396,34 @@
           <label class="label" style="margin-top:10px">Helper min confidence</label>
           <div class="input-row">
             <input id="settingsHelperConfidence" class="textinput" type="number" min="0" max="1" step="0.05" />
-            <div class="muted">0.0–1.0</div>
+            <div class="muted">0.0-1.0</div>
+          </div>
+
+          <div style="height:16px"></div>
+          <div class="muted">AI agents</div>
+          <div style="height:8px"></div>
+          <label class="label">Builder agent</label>
+          <select id="settingsBuilderAgent" class="select"></select>
+          <div style="height:8px"></div>
+          <label class="label">Architect agent</label>
+          <select id="settingsArchitectAgent" class="select"></select>
+          <div style="height:8px"></div>
+          <label class="label">Summary agent</label>
+          <select id="settingsSummaryAgent" class="select"></select>
+          <div style="height:8px"></div>
+          <label class="label">Capability mapper agent</label>
+          <select id="settingsCapabilityMapperAgent" class="select"></select>
+          <div style="height:8px"></div>
+          <label class="label">Semantic diff agent</label>
+          <select id="settingsSemanticDiffAgent" class="select"></select>
+          <div style="height:8px"></div>
+          <label class="label">Knowledgebase sync agent</label>
+          <select id="settingsKbSyncAgent" class="select"></select>
+          <div style="height:8px"></div>
+          <label class="label">Dumb builder (fallback) agent</label>
+          <select id="settingsDumbBuilderAgent" class="select"></select>
+          <div class="muted" style="margin-top:8px">
+            Agents are loaded from Home Assistant conversation agents. Leave blank to use server defaults.
           </div>
         </div>
 

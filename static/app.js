@@ -546,6 +546,57 @@ function agentStatusText(key, actionText, fallbackLabel) {
   return id ? `${label} (${id}) ${actionText}` : `${label} ${actionText}`;
 }
 
+function normalizeAgentList(out) {
+  const list = Array.isArray(out)
+    ? out
+    : Array.isArray(out?.agents)
+      ? out.agents
+      : Array.isArray(out?.data)
+        ? out.data
+        : [];
+  return list
+    .map((agent) => {
+      const id = agent?.id || agent?.agent_id || agent?.entity_id || "";
+      const name = agent?.name || agent?.title || id || "Agent";
+      return { id, name };
+    })
+    .filter((agent) => Boolean(agent.id));
+}
+
+async function loadConversationAgents() {
+  try {
+    const out = await api("/api/admin/conversation-agents");
+    return normalizeAgentList(out);
+  } catch (e) {
+    return [];
+  }
+}
+
+function populateAgentSelect(selectId, agents, currentValue) {
+  const select = $(selectId);
+  if (!select) return;
+  select.innerHTML = "";
+  const addOption = (value, label) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    select.appendChild(opt);
+  };
+  addOption("", "Use server default");
+  const exists = agents.some((agent) => agent.id === currentValue);
+  if (currentValue && !exists) {
+    addOption(currentValue, `${currentValue} (custom)`);
+  }
+  agents.forEach((agent) => addOption(agent.id, `${agent.name} (${agent.id})`));
+  select.value = currentValue || "";
+}
+
+function readAgentSelect(selectId) {
+  const select = $(selectId);
+  if (!select) return "";
+  return (select.value || "").trim();
+}
+
 const APP_BASE_PATH = (() => {
   const baseEl = document.querySelector("base");
   let basePath = baseEl?.getAttribute("href") || window.location.pathname || "/";
@@ -1878,6 +1929,15 @@ async function loadRuntimeSettingsIntoModal() {
       const allowDiffToggle = $("settingsAllowAiDiff");
       if (allowDiffToggle) allowDiffToggle.checked = Boolean(settings.allowAiDiff);
     }
+
+    const agents = await loadConversationAgents();
+    populateAgentSelect("settingsBuilderAgent", agents, out?.builder_agent_id || "");
+    populateAgentSelect("settingsArchitectAgent", agents, out?.architect_agent_id || "");
+    populateAgentSelect("settingsSummaryAgent", agents, out?.summary_agent_id || "");
+    populateAgentSelect("settingsCapabilityMapperAgent", agents, out?.capability_mapper_agent_id || "");
+    populateAgentSelect("settingsSemanticDiffAgent", agents, out?.semantic_diff_agent_id || "");
+    populateAgentSelect("settingsKbSyncAgent", agents, out?.kb_sync_helper_agent_id || "");
+    populateAgentSelect("settingsDumbBuilderAgent", agents, out?.dumb_builder_agent_id || "");
   } catch (e) {
     // ignore admin endpoint errors
   }
@@ -1924,6 +1984,13 @@ async function saveRuntimeSettingsFromModal() {
       body: JSON.stringify({
         helper_min_confidence: settings.helperMinConfidence,
         allow_ai_diff: settings.allowAiDiff,
+        builder_agent_id: readAgentSelect("settingsBuilderAgent"),
+        architect_agent_id: readAgentSelect("settingsArchitectAgent"),
+        summary_agent_id: readAgentSelect("settingsSummaryAgent"),
+        capability_mapper_agent_id: readAgentSelect("settingsCapabilityMapperAgent"),
+        semantic_diff_agent_id: readAgentSelect("settingsSemanticDiffAgent"),
+        kb_sync_helper_agent_id: readAgentSelect("settingsKbSyncAgent"),
+        dumb_builder_agent_id: readAgentSelect("settingsDumbBuilderAgent"),
       }),
     });
   } catch (e) {

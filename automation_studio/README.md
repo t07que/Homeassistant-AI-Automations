@@ -14,6 +14,13 @@ This folder contains a Home Assistant add-on wrapper for the Automation Studio U
 - Open the add-on configuration and set:
 - `ha_token` (optional; leave blank to use the Supervisor token)
 - `agent_secret` (optional shared secret for API requests)
+- `builder_agent_id` (optional; override builder agent ID)
+- `architect_agent_id` (optional; override architect agent ID)
+- `summary_agent_id` (optional; override summary agent ID)
+- `capability_mapper_agent_id` (optional; override capability mapper agent ID)
+- `semantic_diff_agent_id` (optional; override semantic diff agent ID)
+- `kb_sync_helper_agent_id` (optional; override knowledgebase sync agent ID)
+- `dumb_builder_agent_id` (optional; override dumb builder fallback agent ID)
 - `automations_path` (defaults to `/config/automations.yaml`)
 - `scripts_path` (defaults to `/config/scripts.yaml`)
 - `restore_state_path` (defaults to `/config/.storage/core.restore_state`)
@@ -38,7 +45,7 @@ Completion announcements are off by default. To enable them, set environment var
 
 ## AI agent setup (required for best results)
 Create the following conversation agents in Home Assistant and paste the prompts from the repo.
-Use the indicated model for each.
+Models are suggestions; use what you prefer.
 
 ### Main agents
 1) **Architect**
@@ -47,7 +54,7 @@ Use the indicated model for each.
    - Prompt file: `architect_prompt.txt`
 
 2) **Builder (main)**
-   - Agent ID: `conversation.homeassistant`
+   - Agent ID: `conversation.autoautomation`
    - Model: `gpt-5.2`
    - Prompt file: `builder_prompt.txt`
 
@@ -77,7 +84,15 @@ Use the indicated model for each.
    - Model: `gpt-4o-mini`
    - Prompt file: `kb_sync_helper_prompt.txt`
 
-After creating the agents, restart the add-on so it can use them.
+### Configure agent IDs
+You can override agent IDs in three places (highest priority first):
+1. UI Settings -> AI agents (runtime config).
+2. Add-on configuration (options in the add-on UI).
+3. Defaults in `agent_server.py`.
+
+In the UI, open **Settings** and select each agent from the dropdowns. The list is pulled from Home Assistant conversation agents, and leaving a dropdown blank uses the server default.
+
+After changing add-on config values, restart the add-on.
 
 ## Notes
 - Data is stored in `/data` inside the add-on container (persistent).

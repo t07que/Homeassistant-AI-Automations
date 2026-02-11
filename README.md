@@ -63,18 +63,31 @@ Key sections:
 ## AI Agent Setup (Required for best results)
 Create conversation agents in Home Assistant and paste prompts from the repo.
 
-Main agents:
-- Architect: `architect_prompt.txt`
-- Builder: `builder_prompt.txt`
-- Dumb builder fallback: `builder_prompt.txt` + `dumb_builder_addendum.txt`
+Suggested agents (models are suggestions; use what you prefer):
+- Architect: `architect_prompt.txt` (gpt-5.2)
+- Builder (main): `builder_prompt.txt` (gpt-5.2)
+- Dumb builder fallback: `builder_prompt.txt` + `dumb_builder_addendum.txt` (gpt-4o-mini)
+- Summary: `automation_summary_prompt.txt` (gpt-4o-mini)
+- Capability mapper: `capability_mapper_prompt.txt` (gpt-4o-mini)
+- Semantic diff summarizer: `semantic_diff_prompt.txt` (gpt-4o-mini)
+- Knowledgebase helper: `kb_sync_helper_prompt.txt` (gpt-4o-mini)
 
-Helper agents:
-- Summary: `automation_summary_prompt.txt`
-- Capability mapper: `capability_mapper_prompt.txt`
-- Semantic diff summarizer: `semantic_diff_prompt.txt`
-- Knowledgebase helper: `kb_sync_helper_prompt.txt`
+### Configure agent IDs
+You can override agent IDs in three places (highest priority first):
+1. UI Settings -> AI agents (runtime config).
+2. Add-on configuration (add-on) or environment variables (local).
+3. Defaults in `agent_server.py`.
 
-Use your preferred models in each agent. The default IDs are set in `agent_server.py` and can be overridden with env vars.
+In the UI, open **Settings** and select each agent from the dropdowns. The list is pulled from Home Assistant conversation agents, and leaving a dropdown blank uses the server default.
+
+Environment variable names (local):
+- `BUILDER_AGENT_ID`
+- `ARCHITECT_AGENT_ID`
+- `SUMMARY_AGENT_ID`
+- `CAPABILITY_MAPPER_AGENT_ID`
+- `SEMANTIC_DIFF_AGENT_ID`
+- `KB_SYNC_HELPER_AGENT_ID`
+- `DUMB_BUILDER_AGENT_ID`
 
 ## Repository Metadata
 If you plan to publish the add-on, update `repository.yaml` (and `repository.json`) with your name and repo URL.
@@ -91,4 +104,24 @@ Common issues:
 - **KB view empty**: ensure `capabilities.yaml` exists and is readable.
 
 ## License
-Add a license of your choice before publishing.
+MIT License
+
+Copyright (c) 2026 Jack Hopperton
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
