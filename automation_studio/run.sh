@@ -28,6 +28,7 @@ keys = [
     "semantic_diff_agent_id",
     "kb_sync_helper_agent_id",
     "dumb_builder_agent_id",
+    "confirm_agent_id",
     "automations_path",
     "scripts_path",
     "restore_state_path",
@@ -73,6 +74,7 @@ CAPABILITY_MAPPER_AGENT_ID="${OPT_CAPABILITY_MAPPER_AGENT_ID:-}"
 SEMANTIC_DIFF_AGENT_ID="${OPT_SEMANTIC_DIFF_AGENT_ID:-}"
 KB_SYNC_HELPER_AGENT_ID="${OPT_KB_SYNC_HELPER_AGENT_ID:-}"
 DUMB_BUILDER_AGENT_ID="${OPT_DUMB_BUILDER_AGENT_ID:-}"
+CONFIRM_AGENT_ID="${OPT_CONFIRM_AGENT_ID:-}"
 
 export STATIC_DIR
 export HA_URL
@@ -93,6 +95,7 @@ export CAPABILITY_MAPPER_AGENT_ID
 export SEMANTIC_DIFF_AGENT_ID
 export KB_SYNC_HELPER_AGENT_ID
 export DUMB_BUILDER_AGENT_ID
+export CONFIRM_AGENT_ID
 
 cd /app
 

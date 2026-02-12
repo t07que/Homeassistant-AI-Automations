@@ -1,6 +1,6 @@
 {
   "name": "Automation Studio",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "slug": "automation_studio",
   "description": "AI Auto Automation Builder UI and API",
   "arch": ["amd64", "aarch64", "armv7", "armhf", "i386"],
@@ -31,6 +31,7 @@
     "semantic_diff_agent_id": "conversation.home_assistant_semantic_diff_summarizer",
     "kb_sync_helper_agent_id": "conversation.knowledgebase_sync_helper",
     "dumb_builder_agent_id": "conversation.autoautomation_dumb_builder",
+    "confirm_agent_id": "",
     "automations_path": "/config/automations.yaml",
     "scripts_path": "/config/scripts.yaml",
     "restore_state_path": "/config/.storage/core.restore_state",
@@ -52,6 +53,7 @@
     "semantic_diff_agent_id": "str?",
     "kb_sync_helper_agent_id": "str?",
     "dumb_builder_agent_id": "str?",
+    "confirm_agent_id": "str?",
     "automations_path": "str?",
     "scripts_path": "str?",
     "restore_state_path": "str?",

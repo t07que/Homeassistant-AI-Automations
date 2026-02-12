@@ -443,7 +443,7 @@ CONFIRM_FIELD = os.getenv("CONFIRM_FIELD", "message")
 
 # Optional completion generation via conversation agent
 CONFIRM_JARVIS = os.getenv("CONFIRM_JARVIS", "0") == "1"
-CONFIRM_AGENT_ID = os.getenv("CONFIRM_AGENT_ID", "conversation.chatgpt_2")
+CONFIRM_AGENT_ID = _clean_env_value(os.getenv("CONFIRM_AGENT_ID")) or ARCHITECT_AGENT_ID
 
 # Optional legacy TTS support (only used if you set CONFIRM_DOMAIN=tts & CONFIRM_SERVICE=speak)
 TTS_ENTITY_ID = os.getenv("TTS_ENTITY_ID", "")
@@ -2077,7 +2077,7 @@ def _apply_runtime_config(cfg: Dict[str, Any]) -> None:
     global HELPER_MIN_CONFIDENCE, ALLOW_AI_DIFF
     global BUILDER_AGENT_ID, ARCHITECT_AGENT_ID, SUMMARY_AGENT_ID
     global CAPABILITY_MAPPER_AGENT_ID, SEMANTIC_DIFF_AGENT_ID, KB_SYNC_HELPER_AGENT_ID
-    global DUMB_BUILDER_AGENT_ID, AI_EDIT_AGENT_ID
+    global DUMB_BUILDER_AGENT_ID, AI_EDIT_AGENT_ID, CONFIRM_AGENT_ID
     global USAGE_CURRENCY, ROLE_MODEL_OVERRIDES
     if not isinstance(cfg, dict):
         return
@@ -2104,6 +2104,9 @@ def _apply_runtime_config(cfg: Dict[str, Any]) -> None:
     SEMANTIC_DIFF_AGENT_ID = _apply_agent("semantic_diff_agent_id", SEMANTIC_DIFF_AGENT_ID)
     KB_SYNC_HELPER_AGENT_ID = _apply_agent("kb_sync_helper_agent_id", KB_SYNC_HELPER_AGENT_ID)
     DUMB_BUILDER_AGENT_ID = _apply_agent("dumb_builder_agent_id", DUMB_BUILDER_AGENT_ID)
+    CONFIRM_AGENT_ID = _apply_agent("confirm_agent_id", CONFIRM_AGENT_ID)
+    if not CONFIRM_AGENT_ID:
+        CONFIRM_AGENT_ID = ARCHITECT_AGENT_ID
     # Keep edit agent aligned with builder unless explicitly overridden elsewhere.
     AI_EDIT_AGENT_ID = BUILDER_AGENT_ID
     if "usage_currency" in cfg:
@@ -3585,6 +3588,7 @@ def api_admin_runtime_get(x_ha_agent_secret: str = Header(default="")):
         "semantic_diff_agent_id": SEMANTIC_DIFF_AGENT_ID,
         "kb_sync_helper_agent_id": KB_SYNC_HELPER_AGENT_ID,
         "dumb_builder_agent_id": DUMB_BUILDER_AGENT_ID,
+        "confirm_agent_id": CONFIRM_AGENT_ID,
         "usage_currency": USAGE_CURRENCY,
         "supported_currencies": sorted(CURRENCY_RATES_FROM_USD.keys()),
         "pricing_models": sorted(MODEL_COSTS_USD.keys()),
@@ -3611,6 +3615,7 @@ def api_admin_runtime_set(
         "semantic_diff_agent_id": SEMANTIC_DIFF_AGENT_ID,
         "kb_sync_helper_agent_id": KB_SYNC_HELPER_AGENT_ID,
         "dumb_builder_agent_id": DUMB_BUILDER_AGENT_ID,
+        "confirm_agent_id": CONFIRM_AGENT_ID,
         "usage_currency": USAGE_CURRENCY,
         **runtime_models,
     }
@@ -3631,6 +3636,7 @@ def api_admin_runtime_set(
         "semantic_diff_agent_id",
         "kb_sync_helper_agent_id",
         "dumb_builder_agent_id",
+        "confirm_agent_id",
     ]:
         if key in body:
             cfg[key] = str(body.get(key) or "").strip()
@@ -3657,6 +3663,7 @@ def api_admin_runtime_set(
         "semantic_diff_agent_id": SEMANTIC_DIFF_AGENT_ID,
         "kb_sync_helper_agent_id": KB_SYNC_HELPER_AGENT_ID,
         "dumb_builder_agent_id": DUMB_BUILDER_AGENT_ID,
+        "confirm_agent_id": CONFIRM_AGENT_ID,
         "usage_currency": USAGE_CURRENCY,
         "supported_currencies": sorted(CURRENCY_RATES_FROM_USD.keys()),
         "pricing_models": sorted(MODEL_COSTS_USD.keys()),

@@ -2259,6 +2259,7 @@ async function loadRuntimeSettingsIntoModal() {
     populateAgentSelect("settingsSemanticDiffAgent", agents, out?.semantic_diff_agent_id || "");
     populateAgentSelect("settingsKbSyncAgent", agents, out?.kb_sync_helper_agent_id || "");
     populateAgentSelect("settingsDumbBuilderAgent", agents, out?.dumb_builder_agent_id || "");
+    populateAgentSelect("settingsConfirmAgent", agents, out?.confirm_agent_id || "");
 
     const currencies = Array.isArray(out?.supported_currencies) && out.supported_currencies.length
       ? out.supported_currencies.map((cur) => String(cur || "").toUpperCase()).filter(Boolean)
@@ -2324,6 +2325,7 @@ async function saveRuntimeSettingsFromModal() {
       semantic_diff_agent_id: readAgentSelect("settingsSemanticDiffAgent"),
       kb_sync_helper_agent_id: readAgentSelect("settingsKbSyncAgent"),
       dumb_builder_agent_id: readAgentSelect("settingsDumbBuilderAgent"),
+      confirm_agent_id: readAgentSelect("settingsConfirmAgent"),
     };
     RUNTIME_MODEL_FIELDS.forEach((field) => {
       payload[field.key] = readAgentSelect(field.selectId);
