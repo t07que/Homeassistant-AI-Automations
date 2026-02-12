@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>HA Auto Agent - Automation Studio</title>
-  <link rel="stylesheet" href="static/style.css?v=0.1.22" />
+  <link rel="stylesheet" href="static/style.css?v=0.1.23" />
 
   <!-- CodeMirror (YAML editor) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
@@ -46,10 +46,14 @@
             </div>
           </div>
           <div class="search">
-            <input id="searchInput" type="search" name="automation_search" placeholder="Search automations (alias/desc/id)..." autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" />
-            <button class="btn tiny ghost" id="hideDisabledToggleBtn" type="button" aria-pressed="false">Hide disabled</button>
-            <button class="btn tiny ghost" id="combineBtn" type="button" disabled>Combine</button>
-            <button class="iconbtn" id="clearSearchBtn" title="Clear">x</button>
+            <div class="search-input-row">
+              <input id="searchInput" type="search" name="automation_search" placeholder="Search automations (alias/desc/id)..." autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" />
+              <button class="iconbtn" id="clearSearchBtn" title="Clear">x</button>
+            </div>
+            <div class="search-controls">
+              <button class="btn tiny ghost" id="hideDisabledToggleBtn" type="button" aria-pressed="false">Hide disabled</button>
+              <button class="btn tiny ghost" id="combineBtn" type="button" disabled>Combine</button>
+            </div>
           </div>
 
           <div class="setup-banner" id="setupBanner" hidden>
@@ -127,7 +131,7 @@
               <div class="ai-row" id="aiRow">
                 <div class="card ai-panel">
                   <div class="card-title">
-                    <span>Consult with the architect...</span>
+                    <span id="aiAssistHeading">Consult with the architect...</span>
                   </div>
                   <div class="card-body">
                     <textarea id="aiPrompt" placeholder="e.g. Add a 30 min bedtime window, and do not announce if I am already in bed..."></textarea>
@@ -138,7 +142,7 @@
                       <span class="ai-status-text"></span>
                     </div>
 
-                    <div class="muted" style="margin-top:10px">
+                    <div class="muted" id="aiAssistHint" style="margin-top:10px">
                       Plan changes with the Architect, then finalize to build an automation or script. The editor updates after build.
                     </div>
 
@@ -449,6 +453,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/diff/5.2.0/diff.min.js"></script>
-  <script src="static/app.js?v=0.1.22"></script>
+  <script src="static/app.js?v=0.1.23"></script>
 </body>
 </html>

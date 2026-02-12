@@ -884,9 +884,56 @@ function getCombineSelectionIds() {
   return [...new Set(vals.map((id) => String(id || "").trim()).filter(Boolean))];
 }
 
+function getCombineSelectionSummary() {
+  const ids = getCombineSelectionIds();
+  if (!ids.length) return "";
+  const namesById = new Map(
+    (state.list || []).map((item) => [String(item?.id || "").trim(), String(item?.alias || item?.name || item?.id || "").trim()])
+  );
+  const names = ids.map((id) => namesById.get(id) || id).filter(Boolean);
+  if (names.length <= 3) return names.join(", ");
+  return `${names.slice(0, 3).join(", ")}, +${names.length - 3} more`;
+}
+
+function updateArchitectAssistCopy() {
+  const heading = $("aiAssistHeading");
+  const hint = $("aiAssistHint");
+  const prompt = $("aiPrompt");
+  const promptExpanded = $("aiPromptExpanded");
+  const count = getCombineSelectionIds().length;
+
+  if (isAutomation() && count >= 2) {
+    const selectedText = getCombineSelectionSummary();
+    const combinePlaceholder = `Add notes here to add or remove features from the combined ${entityLabel()}. Currently we are combining: ${selectedText}.`;
+    if (heading) heading.textContent = "Combine these with the architect's assistance";
+    if (hint) {
+      hint.textContent = `Selected ${count} automations. Add notes, then finalize to build one combined automation and disable redundant originals.`;
+    }
+    if (prompt) prompt.placeholder = combinePlaceholder;
+    if (promptExpanded) promptExpanded.placeholder = combinePlaceholder;
+    return;
+  }
+
+  if (heading) heading.textContent = "Consult with the architect...";
+  if (hint) {
+    hint.textContent = "Plan changes with the Architect, then finalize to build an automation or script. The editor updates after build.";
+  }
+  if (prompt) {
+    prompt.placeholder = isAutomation()
+      ? "e.g. Add a 30 min bedtime window, and do not announce if I am already in bed..."
+      : "e.g. Create a script that powers down the living room and turns off the TV...";
+  }
+  if (promptExpanded) {
+    promptExpanded.placeholder = isAutomation()
+      ? "Add your next automation change request..."
+      : "Add your next script change request...";
+  }
+}
+
 function setCombineSelection(ids) {
   state.combineSelectionIds = [...new Set((ids || []).map((id) => String(id || "").trim()).filter(Boolean))];
   syncCombineButton();
+  updateArchitectAssistCopy();
 }
 
 function pruneCombineSelection() {
@@ -935,6 +982,8 @@ function renderList() {
 
   if (!items.length) {
     el.innerHTML = `<div class="empty">No matches.</div>`;
+    syncCombineButton();
+    updateArchitectAssistCopy();
     return;
   }
 
@@ -956,13 +1005,15 @@ function renderList() {
 
     div.innerHTML = `
       <div class="item-top">
-        <div class="item-title">${escapeHtml(it.alias || it.name || it.id)}</div>
-        <div style="display:flex; gap:6px; align-items:center;">
+        <div class="item-title-wrap">
           ${isAutomation() ? `
             <label class="item-select-wrap" title="Select for combine">
               <input class="item-select" type="checkbox" data-combine-id="${escapeHtml(it.id)}" ${isSelected ? "checked" : ""} />
             </label>
           ` : ""}
+          <div class="item-title">${escapeHtml(it.alias || it.name || it.id)}</div>
+        </div>
+        <div class="item-actions">
           ${isDisabled ? `<span class="badge badge-disabled">Disabled</span>` : ""}
           <button class="item-toggle" data-action="toggle">Details</button>
         </div>
@@ -980,6 +1031,7 @@ function renderList() {
     el.appendChild(div);
   }
   syncCombineButton();
+  updateArchitectAssistCopy();
 }
 
 function renderHealthPanel() {
@@ -2166,6 +2218,7 @@ function updateEntityUi() {
     $("aMeta").textContent = "Pick one from the list on the left.";
   }
   syncCombineButton();
+  updateArchitectAssistCopy();
   updateArchitectActionState();
 }
 
