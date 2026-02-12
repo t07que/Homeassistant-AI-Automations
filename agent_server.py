@@ -493,6 +493,44 @@ DUMB_BUILDER_ADDENDUM = (
     "Prefer preserving the current YAML structure."
 )
 
+SIMPLE_EDIT_MAX_CHARS = _env_int("SIMPLE_EDIT_MAX_CHARS", 220)
+SIMPLE_EDIT_KEYWORDS = (
+    "syntax",
+    "yaml",
+    "yml",
+    "indent",
+    "indentation",
+    "parse",
+    "parser",
+    "format",
+    "formatting",
+    "typo",
+    "whitespace",
+    "quote",
+    "quotes",
+    "colon",
+    "comma",
+    "bracket",
+    "brace",
+    "fix error",
+    "repair",
+    "quick fix",
+    "small change",
+    "minor change",
+)
+SIMPLE_EDIT_COMPLEX_HINTS = (
+    "new automation",
+    "new script",
+    "from scratch",
+    "combine",
+    "merge",
+    "multiple triggers",
+    "new trigger",
+    "new condition",
+    "new action",
+    "blueprint",
+)
+
 HELPER_MIN_CONFIDENCE = _env_float("HELPER_MIN_CONFIDENCE", 0.55)
 SUMMARY_CACHE_FILE = _clean_env_value(os.getenv("SUMMARY_CACHE_FILE")) or "summary_cache.json"
 SUMMARY_CACHE_MAX = _env_int("SUMMARY_CACHE_MAX", 400)
@@ -2992,6 +3030,21 @@ def _get_conversation_payload(key: str) -> Dict[str, Any]:
         "conversation_history": history,
     }
 
+
+def _latest_user_message(history: Any) -> str:
+    if not isinstance(history, list):
+        return ""
+    for msg in reversed(history):
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role") or msg.get("type") or "").strip().lower()
+        if role != "user":
+            continue
+        text = str(msg.get("text") or msg.get("content") or "").strip()
+        if text:
+            return text
+    return ""
+
 # ----------------------------
 # HA WS FETCH
 # ----------------------------
@@ -3049,6 +3102,34 @@ DOMAIN_HINTS = {
 
 def _tokenize_text(text: str) -> List[str]:
     return re.findall(r"[a-z0-9_]+", (text or "").lower())
+
+
+def _is_simple_edit_request(text: str) -> bool:
+    s = (text or "").strip().lower()
+    if not s:
+        return False
+    if len(s) > SIMPLE_EDIT_MAX_CHARS:
+        return False
+    if len([ln for ln in s.splitlines() if ln.strip()]) > 4:
+        return False
+
+    has_keyword = any(k in s for k in SIMPLE_EDIT_KEYWORDS)
+    if not has_keyword:
+        has_keyword = bool(
+            re.search(
+                r"\b(change|set|update|rename|fix)\b.{0,40}\b(alias|description|mode|initial_state|yaml|indent)\b",
+                s,
+                re.S,
+            )
+        )
+    if not has_keyword:
+        return False
+
+    complex_hits = sum(1 for hint in SIMPLE_EDIT_COMPLEX_HINTS if hint in s)
+    if complex_hits >= 2 and not any(k in s for k in ("syntax", "yaml", "indent", "parse", "format")):
+        return False
+    return True
+
 
 def _infer_domains(request_text: str, summary: Optional[Dict[str, Any]] = None) -> List[str]:
     text = request_text or ""
@@ -3212,6 +3293,83 @@ def build_capabilities_subset(
     return caps
 
 
+def _limit_dict_items(value: Any, limit: int) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for idx, (k, v) in enumerate(value.items()):
+        if idx >= limit:
+            break
+        out[k] = v
+    return out
+
+
+def _compact_capabilities_for_simple_edit(caps: Dict[str, Any]) -> Dict[str, Any]:
+    base = caps if isinstance(caps, dict) else {}
+    lights = base.get("lights") or {}
+    speech = base.get("speech") or {}
+    notifications = base.get("notifications") or {}
+    media = base.get("media") or {}
+    conventions = base.get("conventions") or {}
+    scripts = base.get("scripts") if isinstance(base.get("scripts"), list) else []
+    power_rules = media.get("power_toggle_rules") if isinstance(media, dict) else []
+    if not isinstance(power_rules, list):
+        power_rules = []
+
+    compact_speech: Dict[str, Any] = {}
+    for key in ("say_script", "say_field", "prompt_script", "prompt_field", "default_mode"):
+        if speech.get(key):
+            compact_speech[key] = speech.get(key)
+
+    compact_scripts: List[Dict[str, Any]] = []
+    for item in scripts[:12]:
+        if not isinstance(item, dict):
+            continue
+        entity_id = item.get("entity_id")
+        if not entity_id:
+            continue
+        row: Dict[str, Any] = {"entity_id": entity_id}
+        if item.get("purpose"):
+            row["purpose"] = item.get("purpose")
+        compact_scripts.append(row)
+
+    return {
+        "conventions": {
+            "automation_alias_prefix": conventions.get("automation_alias_prefix", "AUTO AI GENERATED - "),
+            "prefer_groups_over_areas": conventions.get("prefer_groups_over_areas", True),
+        },
+        "lights": {
+            "prefer_groups": lights.get("prefer_groups", True),
+            "area_aliases": _limit_dict_items((lights.get("area_aliases") or {}), 20),
+            "area_group_map": _limit_dict_items((lights.get("area_group_map") or {}), 20),
+        },
+        "speech": compact_speech,
+        "notifications": {
+            "primary_phone_notify": notifications.get("primary_phone_notify"),
+            "keep_notify_prefixes": notifications.get("keep_notify_prefixes") or ["notify.mobile_app_"],
+            "actionable_event_type": notifications.get("actionable_event_type", "mobile_app_notification_action"),
+        },
+        "media": {
+            "power_toggle_rules": power_rules[:20],
+        },
+        "scripts": compact_scripts,
+        "learned_context": {
+            "entities": {
+                "todo": (((base.get("learned_context") or {}).get("entities") or {}).get("todo") or [])[:10],
+                "calendar": (((base.get("learned_context") or {}).get("entities") or {}).get("calendar") or [])[:10],
+            },
+            "hints": [
+                {
+                    "note": h.get("note"),
+                    "tags": h.get("tags"),
+                }
+                for h in (((base.get("learned_context") or {}).get("hints") or [])[:8])
+                if isinstance(h, dict) and h.get("note")
+            ],
+        },
+    }
+
+
 def _trim_history(history: List[Dict[str, Any]], limit: int = 6, max_len: int = 280) -> List[Dict[str, Any]]:
     if not history:
         return []
@@ -3239,9 +3397,12 @@ def build_context_pack_from_regs(
     area_registry,
     states,
     history: Optional[List[Dict[str, Any]]] = None,
+    summarize_current_yaml: bool = True,
+    max_candidates: int = 80,
+    candidates_per_domain: int = 25,
 ) -> Dict[str, Any]:
     capabilities = load_capabilities()
-    summary = _summarize_yaml_for_prompt(request_text, current_yaml or "") if current_yaml else None
+    summary = _summarize_yaml_for_prompt(request_text, current_yaml or "") if (current_yaml and summarize_current_yaml) else None
     preferred_domains = _infer_domains(request_text, summary)
     include_entities = summary.get("entities") if isinstance(summary, dict) else []
     candidates = build_candidates(
@@ -3252,8 +3413,8 @@ def build_context_pack_from_regs(
         states,
         preferred_domains=preferred_domains,
         include_entities=include_entities,
-        max_total=80,
-        per_domain=25,
+        max_total=max_candidates,
+        per_domain=candidates_per_domain,
     )
     caps_subset = build_capabilities_subset(capabilities, request_text or "", summary)
     return {
@@ -3360,7 +3521,7 @@ def _builder_request_text(payload: Dict[str, Any], *, minimal: bool, addendum: O
     return hint + "\nCONTRACT:\n" + contract + "\n\nINPUT_JSON:\n" + json.dumps(payload, ensure_ascii=False)
 
 
-def call_builder(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+def call_builder(payload: Dict[str, Any], prefer_minimal: bool = False) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     if not BUILDER_AGENT_ID:
         raise RuntimeError("BUILDER_AGENT_ID not configured")
     url = f"{HA_URL}/api/conversation/process"
@@ -3388,28 +3549,43 @@ def call_builder(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str
             except Exception:
                 return None
 
+    entity_type = str(payload.get("entity_type") or "automation").strip().lower()
+    if entity_type not in ("automation", "script"):
+        entity_type = "automation"
+
     minimal_payload = dict(payload)
-    minimal_payload["candidates"] = (payload.get("candidates") or [])[:60]
-    minimal_payload["capabilities"] = slim_capabilities_for_llm(payload.get("capabilities") or {})
-    minimal_payload["output_contract"] = (
-        "Return ONLY minified JSON keys: alias, description, trigger, condition, action, mode, initial_state, helpers_needed. "
-        "Do not include any other keys. helpers_needed must be [] or a list of objects {type, purpose}. "
-        "If entity_ids or services are not specified, infer them from candidates and capabilities. "
-        "Use real HA services. Keep under 1200 characters."
+    minimal_payload["candidates"] = (payload.get("candidates") or [])[:24]
+    minimal_payload["capabilities"] = _compact_capabilities_for_simple_edit(payload.get("capabilities") or {})
+    if entity_type == "script":
+        minimal_payload["output_contract"] = (
+            "Return ONLY minified JSON keys: alias, description, sequence, mode, helpers_needed. "
+            "Do not include any other keys. helpers_needed must be [] or a list of objects {type, purpose}. "
+            "sequence must be a list of valid HA action objects. Keep under 1200 characters."
+        )
+    else:
+        minimal_payload["output_contract"] = (
+            "Return ONLY minified JSON keys: alias, description, trigger, condition, action, mode, initial_state, helpers_needed. "
+            "Do not include any other keys. helpers_needed must be [] or a list of objects {type, purpose}. "
+            "If entity_ids or services are not specified, infer them from candidates and capabilities. "
+            "Use real HA services. Keep under 1200 characters."
+        )
+
+    attempts: List[Tuple[Dict[str, Any], bool]] = (
+        [(minimal_payload, True), (payload, False)]
+        if prefer_minimal
+        else [(payload, False), (minimal_payload, True)]
     )
 
-    speech = _post(_builder_request_text(payload, minimal=False), BUILDER_AGENT_ID)
-    if DEBUG:
-        print("BUILDER RAW SPEECH:", repr(speech[:600]))
-    if not _looks_like_bad_builder_output(speech):
-        parsed = _try_parse(speech)
-        if parsed is not None:
-            return parsed, usage_events
-
-    speech = _post(_builder_request_text(minimal_payload, minimal=True), BUILDER_AGENT_ID)
-    if DEBUG:
-        print("BUILDER RETRY SPEECH:", repr(speech[:600]))
-    if not _looks_like_bad_builder_output(speech):
+    speech = ""
+    for idx, (req_payload, is_minimal) in enumerate(attempts):
+        speech = _post(_builder_request_text(req_payload, minimal=is_minimal), BUILDER_AGENT_ID)
+        if DEBUG:
+            label = "BUILDER MINIMAL SPEECH" if is_minimal else "BUILDER RAW SPEECH"
+            if idx > 0:
+                label = "BUILDER RETRY SPEECH"
+            print(label + ":", repr(speech[:600]))
+        if _looks_like_bad_builder_output(speech):
+            continue
         parsed = _try_parse(speech)
         if parsed is not None:
             return parsed, usage_events
@@ -5110,6 +5286,12 @@ async def api_architect_chat(
         entity_id = None
         if len(combine_ids) < 2:
             raise HTTPException(status_code=400, detail="Select at least two automations to combine")
+    simple_edit_request = (
+        mode == "edit"
+        and bool(entity_id)
+        and bool(req.current_yaml)
+        and _is_simple_edit_request(text)
+    )
     label = "script" if entity_type == "script" else "automation"
     label_upper = label.upper()
 
@@ -5126,31 +5308,37 @@ async def api_architect_chat(
         prompt_parts.append("SOURCE_AUTOMATIONS_JSON:\n" + json.dumps(combine_source_summaries, ensure_ascii=False))
 
     if not req.conversation_id:
-        try:
-            entity_registry, device_registry, area_registry, states = await ha_ws_fetch()
-            history = []
-            if entity_id:
-                payload = _get_conversation_payload(_script_key(entity_id) if entity_type == "script" else entity_id)
-                history = payload.get("conversation_history") if isinstance(payload, dict) else []
-            context_pack = build_context_pack_from_regs(
-                text,
-                req.current_yaml if req.include_context else None,
-                entity_type,
-                entity_registry,
-                device_registry,
-                area_registry,
-                states,
-                history=history if isinstance(history, list) else [],
+        if simple_edit_request:
+            prompt_parts.append(
+                f"Context: This is a small edit request for existing {label} {entity_id}. "
+                "Keep the response focused and avoid redesigning unrelated behavior."
             )
-        except Exception:
-            context_pack = None
-        if context_pack:
-            prompt_parts.append("CONTEXT_PACK_JSON:\n" + json.dumps(context_pack, ensure_ascii=False))
         else:
-            caps_json = json.dumps(slim_capabilities_for_llm(load_capabilities()), ensure_ascii=False)
-            prompt_parts.append("CAPABILITIES_JSON:\n" + caps_json)
+            try:
+                entity_registry, device_registry, area_registry, states = await ha_ws_fetch()
+                history = []
+                if entity_id:
+                    payload = _get_conversation_payload(_script_key(entity_id) if entity_type == "script" else entity_id)
+                    history = payload.get("conversation_history") if isinstance(payload, dict) else []
+                context_pack = build_context_pack_from_regs(
+                    text,
+                    req.current_yaml if req.include_context else None,
+                    entity_type,
+                    entity_registry,
+                    device_registry,
+                    area_registry,
+                    states,
+                    history=history if isinstance(history, list) else [],
+                )
+            except Exception:
+                context_pack = None
+            if context_pack:
+                prompt_parts.append("CONTEXT_PACK_JSON:\n" + json.dumps(context_pack, ensure_ascii=False))
+            else:
+                caps_json = json.dumps(slim_capabilities_for_llm(load_capabilities()), ensure_ascii=False)
+                prompt_parts.append("CAPABILITIES_JSON:\n" + caps_json)
 
-    if req.include_context and req.current_yaml and entity_id:
+    if req.include_context and req.current_yaml and entity_id and not simple_edit_request:
         summary = (context_pack or {}).get("summary") if context_pack else _summarize_yaml_for_prompt(text, req.current_yaml)
         if context_pack and summary:
             prompt_parts.append(f"Context: You are discussing edits to {label} {entity_id}. Summary is in CONTEXT_PACK_JSON.")
@@ -5164,6 +5352,11 @@ async def api_architect_chat(
                 f"Context: You are discussing edits to {label} {entity_id}.\n"
                 f"CURRENT {label_upper} YAML:\n{req.current_yaml}"
             )
+    elif mode == "edit" and entity_id and simple_edit_request:
+        prompt_parts.append(
+            f"Context: You are discussing a small update to {label} {entity_id}. "
+            "Keep changes minimal and preserve existing triggers/conditions/actions unless requested."
+        )
     elif mode == "create":
         prompt_parts.append(f"Context: You are planning a new {label}.")
 
@@ -5264,6 +5457,18 @@ async def api_architect_finalize(
         entity_id = None
         if len(combine_ids) < 2:
             raise HTTPException(status_code=400, detail="Select at least two automations to combine")
+    user_text = (req.text or "").strip()
+    recent_user_text = ""
+    if entity_id:
+        key = _script_key(entity_id) if entity_type == "script" else entity_id
+        recent_user_text = _latest_user_message((_get_conversation_payload(key) or {}).get("conversation_history"))
+    effective_user_text = user_text or recent_user_text
+    simple_edit_request = (
+        mode == "edit"
+        and bool(entity_id)
+        and bool(req.current_yaml)
+        and _is_simple_edit_request(effective_user_text)
+    )
     label = "script" if entity_type == "script" else "automation"
     label_upper = label.upper()
     context_pack = None
@@ -5274,33 +5479,43 @@ async def api_architect_finalize(
             raise HTTPException(status_code=404, detail=f"Automations not found: {', '.join(missing_ids)}")
         combine_source_summaries = _build_combine_source_summaries(source_items, req.text or "")
 
-    finalize_parts = [
-        "We are ready to hand off to the builder agent.",
-        f"Write the FINAL BUILDER PROMPT as direct instructions to the builder agent for a Home Assistant {label}.",
-        "Do NOT address the user. Do NOT ask questions. No commentary.",
-        "Assume clarifications are complete. If details are missing, make the best reasonable assumptions and proceed.",
-        "Return ONLY prompt text (plain instructions). No JSON/YAML. No markdown code fences.",
-        "Use this exact handoff structure with section headings:",
-        "### Build goal",
-        "### Scope (CREATE or EDIT or COMBINE)",
-        "### Required behavior",
-        "### Triggers",
-        "### Conditions and guards",
-        "### Actions",
-        "### Entities and services (confirmed and placeholders)",
-        "### Reliability and anti-noise rules",
-        "### Edge cases and assumptions",
-        "### Output contract for builder",
-    ]
+    if req.conversation_id:
+        finalize_parts = [
+            "Produce the FINAL BUILDER PROMPT now, based on this conversation.",
+            f"Scope: {mode.upper()} for a Home Assistant {label}.",
+            "Follow the handoff template already defined in your system instructions.",
+            "Do NOT ask follow-up questions. Return ONLY builder instructions (plain text).",
+        ]
+    else:
+        finalize_parts = [
+            "We are ready to hand off to the builder agent.",
+            f"Write the FINAL BUILDER PROMPT as direct instructions to the builder agent for a Home Assistant {label}.",
+            "Do NOT address the user. Do NOT ask questions. No commentary.",
+            "Assume clarifications are complete. If details are missing, make the best reasonable assumptions and proceed.",
+            "Return ONLY prompt text (plain instructions). No JSON/YAML. No markdown code fences.",
+            "Use this exact handoff structure with section headings:",
+            "### Build goal",
+            "### Scope (CREATE or EDIT or COMBINE)",
+            "### Required behavior",
+            "### Triggers",
+            "### Conditions and guards",
+            "### Actions",
+            "### Entities and services (confirmed and placeholders)",
+            "### Reliability and anti-noise rules",
+            "### Edge cases and assumptions",
+            "### Output contract for builder",
+        ]
     summary_for_finalize = None
     if mode == "edit" and entity_id:
         finalize_parts.append(f"This is an EDIT of existing {label} id: {entity_id}.")
-        if req.include_context and req.current_yaml:
-            summary_for_finalize = _summarize_yaml_for_prompt(req.text or "", req.current_yaml)
+        if req.include_context and req.current_yaml and not req.conversation_id and not simple_edit_request:
+            summary_for_finalize = _summarize_yaml_for_prompt(effective_user_text, req.current_yaml)
             if summary_for_finalize:
                 finalize_parts.append(f"Use the PROVIDED {label_upper} SUMMARY JSON as the base and modify it.")
             else:
                 finalize_parts.append(f"Use the PROVIDED {label_upper} YAML as the base and modify it.")
+        elif simple_edit_request:
+            finalize_parts.append("This is a SMALL EDIT. Keep the existing structure and behavior unless the user request requires a direct fix.")
     elif mode == "combine":
         finalize_parts.append("This is a COMBINE request for multiple existing automations.")
         finalize_parts.append("You must merge all provided source automations into one robust automation.")
@@ -5311,49 +5526,64 @@ async def api_architect_finalize(
             "automation id/alias what is preserved, deduplicated, or intentionally changed."
         )
     if not req.conversation_id:
-        try:
-            entity_registry, device_registry, area_registry, states = await ha_ws_fetch()
-            history = []
-            if entity_id:
-                payload = _get_conversation_payload(_script_key(entity_id) if entity_type == "script" else entity_id)
-                history = payload.get("conversation_history") if isinstance(payload, dict) else []
-            context_pack = build_context_pack_from_regs(
-                req.text or "",
-                req.current_yaml if req.include_context else None,
-                entity_type,
-                entity_registry,
-                device_registry,
-                area_registry,
-                states,
-                history=history if isinstance(history, list) else [],
+        if simple_edit_request:
+            finalize_parts.append(
+                "Context: simple edit request. Keep output concise and avoid unrelated refactors."
             )
-        except Exception:
-            context_pack = None
-        if context_pack:
-            finalize_parts.append("CONTEXT_PACK_JSON:\n" + json.dumps(context_pack, ensure_ascii=False))
         else:
-            caps_json = json.dumps(slim_capabilities_for_llm(load_capabilities()), ensure_ascii=False)
-            finalize_parts.append("CAPABILITIES_JSON:\n" + caps_json)
+            try:
+                entity_registry, device_registry, area_registry, states = await ha_ws_fetch()
+                history = []
+                if entity_id:
+                    payload = _get_conversation_payload(_script_key(entity_id) if entity_type == "script" else entity_id)
+                    history = payload.get("conversation_history") if isinstance(payload, dict) else []
+                context_pack = build_context_pack_from_regs(
+                    effective_user_text,
+                    req.current_yaml if req.include_context else None,
+                    entity_type,
+                    entity_registry,
+                    device_registry,
+                    area_registry,
+                    states,
+                    history=history if isinstance(history, list) else [],
+                )
+            except Exception:
+                context_pack = None
+            if context_pack:
+                finalize_parts.append("CONTEXT_PACK_JSON:\n" + json.dumps(context_pack, ensure_ascii=False))
+            else:
+                caps_json = json.dumps(slim_capabilities_for_llm(load_capabilities()), ensure_ascii=False)
+                finalize_parts.append("CAPABILITIES_JSON:\n" + caps_json)
 
     if summary_for_finalize and not (context_pack and context_pack.get("summary")):
         finalize_parts.append(f"{label_upper}_SUMMARY_JSON:\n{json.dumps(summary_for_finalize, ensure_ascii=False)}")
-    elif req.include_context and req.current_yaml and not summary_for_finalize:
+    elif req.include_context and req.current_yaml and not summary_for_finalize and not req.conversation_id and not simple_edit_request:
         finalize_parts.append(f"{label_upper}_YAML:\n{req.current_yaml}")
     finalize_parts.append(
         "Guidance: If the user does not specify exact entity_ids or services, infer them from the provided context "
         "(CONTEXT_PACK_JSON or CAPABILITIES_JSON) and known candidates; make reasonable assumptions and write them explicitly."
     )
-    if req.text:
-        finalize_parts.append(f"USER MESSAGE:\n{req.text}")
+    if user_text:
+        finalize_parts.append(f"USER MESSAGE:\n{user_text}")
     finalize_prompt = "\n".join(finalize_parts)
+    final_text = ""
+    conv_id = req.conversation_id
+    architect_usage: Optional[Dict[str, Any]] = None
+    if simple_edit_request and effective_user_text and not req.conversation_id:
+        final_text = (
+            f"Edit the existing Home Assistant {label} YAML.\n"
+            f"Apply ONLY this request: {effective_user_text}\n"
+            "Preserve existing behavior, triggers, conditions, and actions unless directly required by the request.\n"
+            "Keep the response minimal and valid."
+        )
+    else:
+        try:
+            final_text, conv_id, architect_usage = call_conversation_agent_full(ARCHITECT_AGENT_ID, finalize_prompt, req.conversation_id)
+        except requests.exceptions.ReadTimeout:
+            raise HTTPException(status_code=504, detail="Home Assistant conversation timed out. Try again or increase HA_CONVERSATION_TIMEOUT.")
 
-    try:
-        final_text, conv_id, architect_usage = call_conversation_agent_full(ARCHITECT_AGENT_ID, finalize_prompt, req.conversation_id)
-    except requests.exceptions.ReadTimeout:
-        raise HTTPException(status_code=504, detail="Home Assistant conversation timed out. Try again or increase HA_CONVERSATION_TIMEOUT.")
-
-    if not final_text:
-        raise HTTPException(status_code=500, detail="Architect did not return a final prompt")
+        if not final_text:
+            raise HTTPException(status_code=500, detail="Architect did not return a final prompt")
 
     # Build config via builder agent
     ha_config, _, builder_usage = await build_ha_config_from_text(
@@ -5361,6 +5591,8 @@ async def api_architect_finalize(
         source="combine" if mode == "combine" else "architect",
         current_yaml=req.current_yaml if mode == "edit" else None,
         entity_type=entity_type,
+        user_request=effective_user_text,
+        simple_edit_hint=simple_edit_request,
     )
 
     note = f"architect:{final_text[:200]}".strip()
@@ -5371,7 +5603,7 @@ async def api_architect_finalize(
     if entity_id:
         history_payload = _get_conversation_payload(_script_key(entity_id) if entity_type == "script" else entity_id)
     history_items = (history_payload or {}).get("conversation_history") if isinstance(history_payload, dict) else []
-    saved_info = save_learned_from_history(history_items or [], req.text)
+    saved_info = save_learned_from_history(history_items or [], user_text)
 
     if mode == "combine":
         automations_file = _get_automations_file_path()
@@ -5991,8 +6223,21 @@ async def build_ha_config_from_text(
     source: str = "ui",
     current_yaml: Optional[str] = None,
     entity_type: str = "automation",
+    user_request: Optional[str] = None,
+    simple_edit_hint: Optional[bool] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, str], List[Dict[str, Any]]]:
     capabilities = load_capabilities()
+
+    entity_type = (entity_type or "automation").strip().lower()
+    if entity_type not in ("automation", "script"):
+        entity_type = "automation"
+    mode = "edit" if current_yaml else "create"
+    effective_request = (user_request or request_text or "").strip()
+    simple_edit_mode = (
+        bool(simple_edit_hint)
+        if simple_edit_hint is not None
+        else (mode == "edit" and _is_simple_edit_request(effective_request))
+    )
 
     entity_registry, device_registry, area_registry, states = await ha_ws_fetch()
     context_pack = build_context_pack_from_regs(
@@ -6004,14 +6249,15 @@ async def build_ha_config_from_text(
         area_registry,
         states,
         history=None,
+        summarize_current_yaml=not simple_edit_mode,
+        max_candidates=24 if simple_edit_mode else 80,
+        candidates_per_domain=8 if simple_edit_mode else 25,
     )
     candidates = context_pack.get("candidates") or []
     caps_subset = context_pack.get("capabilities") or slim_capabilities_for_llm(capabilities)
-
-    entity_type = (entity_type or "automation").strip().lower()
-    if entity_type not in ("automation", "script"):
-        entity_type = "automation"
-    mode = "edit" if current_yaml else "create"
+    if simple_edit_mode:
+        candidates = candidates[:20]
+        caps_subset = _compact_capabilities_for_simple_edit(caps_subset)
 
     prompt = {
         "request": request_text,
@@ -6056,7 +6302,7 @@ async def build_ha_config_from_text(
         prompt["current_yaml"] = current_yaml
 
     try:
-        out, builder_usage = call_builder(prompt)
+        out, builder_usage = call_builder(prompt, prefer_minimal=simple_edit_mode)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
     if not isinstance(out, dict):

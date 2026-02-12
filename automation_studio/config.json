@@ -1,6 +1,6 @@
 {
   "name": "Automation Studio",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "slug": "automation_studio",
   "description": "AI Auto Automation Builder UI and API",
   "arch": ["amd64", "aarch64", "armv7", "armhf", "i386"],

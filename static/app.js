@@ -187,6 +187,32 @@ function toast(msg, ms = 2200) {
   toast._t = setTimeout(() => (t.style.display = "none"), ms);
 }
 
+function openInHaButtonHtml(label) {
+  return `<span class="ha-btn-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 2l7 4v8c0 4.25-2.67 7.74-7 9-4.33-1.26-7-4.75-7-9V6l7-4Zm0 2.3L7 7.12v6.88c0 3.2 1.93 5.84 5 6.95 3.07-1.11 5-3.75 5-6.95V7.12l-5-2.82Zm3.55 10.88-2.85 1.64v-3.28h-1.4v3.28l-2.85-1.64-.7 1.21L12 18.8l4.25-2.41-.7-1.21Z"/></svg></span><span class="ha-btn-text">${label}</span>`;
+}
+
+async function writeClipboardText(text) {
+  const value = String(text ?? "");
+  if (navigator?.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = value;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  ta.style.pointerEvents = "none";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+  const ok = document.execCommand("copy");
+  document.body.removeChild(ta);
+  if (!ok) throw new Error("clipboard_unavailable");
+}
+
 function formatAgentStatusList(list) {
   if (!Array.isArray(list) || !list.length) return "";
   return list
@@ -2534,10 +2560,10 @@ async function copyEnvLine() {
   if (!path) return toast("Enter a UNC path first.");
   const line = `AUTOMATIONS_FILE_PATH=${path}`;
   try {
-    await navigator.clipboard.writeText(line);
+    await writeClipboardText(line);
     toast("Copied env line.");
   } catch (e) {
-    toast("Copy failed - check browser permissions.");
+    toast("Copy failed - clipboard unavailable in this browser/context.");
   }
 }
 
@@ -3883,15 +3909,16 @@ function getCurrentHaEditorUrl() {
 function syncOpenInHaButtonMeta() {
   const btn = $("openInHaBtn");
   if (!btn) return;
-  btn.textContent = isAutomation() ? "Open in HA" : "Open script in HA";
+  const label = isAutomation() ? "Open in HA" : "Open script in HA";
+  btn.innerHTML = openInHaButtonHtml(label);
   const url = getCurrentHaEditorUrl();
   if (url) {
     btn.title = url;
-    btn.setAttribute("aria-label", `${btn.textContent}: ${url}`);
+    btn.setAttribute("aria-label", `${label}: ${url}`);
     return;
   }
   btn.title = `Select a ${entityLabel()} to open in Home Assistant`;
-  btn.setAttribute("aria-label", btn.textContent);
+  btn.setAttribute("aria-label", label);
 }
 
 function openCurrentInHaEditor() {
@@ -5122,8 +5149,12 @@ function wireUI() {
   }
 
   $("copyBtn").onclick = async () => {
-    await navigator.clipboard.writeText(getCurrentDraftText());
-    toast("Copied.");
+    try {
+      await writeClipboardText(getCurrentDraftText());
+      toast("Copied.");
+    } catch (e) {
+      toast("Copy failed - clipboard unavailable in this browser/context.");
+    }
   };
   const openInHaBtn = $("openInHaBtn");
   if (openInHaBtn) openInHaBtn.onclick = () => openCurrentInHaEditor();
