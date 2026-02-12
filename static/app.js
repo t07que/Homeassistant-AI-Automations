@@ -90,6 +90,7 @@ const DEFAULT_SETTINGS = {
   tryLocalEditFirst: true,
   allowAiDiff: false,
   helperMinConfidence: 0.55,
+  usageCurrency: "GBP",
 };
 let settings = { ...DEFAULT_SETTINGS };
 let collapsedCards = new Set();
@@ -110,6 +111,16 @@ const DEFAULT_LAYOUT = {
 let layout = loadLayout();
 let _activeResizeSection = null;
 let _resizeDrag = null;
+const RUNTIME_MODEL_FIELDS = [
+  { role: "builder", key: "builder_model", selectId: "settingsBuilderModel" },
+  { role: "architect", key: "architect_model", selectId: "settingsArchitectModel" },
+  { role: "editor", key: "editor_model", selectId: "settingsEditorModel" },
+  { role: "summary", key: "summary_model", selectId: "settingsSummaryModel" },
+  { role: "capability_mapper", key: "capability_mapper_model", selectId: "settingsCapabilityMapperModel" },
+  { role: "semantic_diff", key: "semantic_diff_model", selectId: "settingsSemanticDiffModel" },
+  { role: "kb_sync_helper", key: "kb_sync_helper_model", selectId: "settingsKbSyncModel" },
+  { role: "dumb_builder", key: "dumb_builder_model", selectId: "settingsDumbBuilderModel" },
+];
 
 function log(msg) {
   const box = $("logBox");
@@ -182,15 +193,22 @@ function formatAgentStatusList(list) {
     .join(", ");
 }
 
-function formatUsd(amount) {
+function formatMoney(amount, currency = "GBP") {
   const value = Number(amount);
-  if (!Number.isFinite(value)) return "$0.0000";
-  if (value >= 1) return `$${value.toFixed(2)}`;
-  if (value >= 0.1) return `$${value.toFixed(3)}`;
-  return `$${value.toFixed(5)}`;
+  if (!Number.isFinite(value)) return `${currency} 0.00000`;
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: value >= 1 ? 2 : 5,
+      maximumFractionDigits: value >= 1 ? 2 : 5,
+    }).format(value);
+  } catch (err) {
+    return `${currency} ${value.toFixed(value >= 1 ? 2 : 5)}`;
+  }
 }
 
-function formatUsageEvent(ev) {
+function formatUsageEvent(ev, fallbackCurrency = "GBP") {
   const name = ev?.name || ev?.agent_id || "agent";
   const model = ev?.model || "model";
   const promptTokens = Number(ev?.prompt_tokens) || 0;
@@ -198,7 +216,10 @@ function formatUsageEvent(ev) {
   const totalTokens = Number.isFinite(Number(ev?.total_tokens))
     ? Number(ev?.total_tokens)
     : promptTokens + completionTokens;
-  const cost = formatUsd(ev?.cost_usd);
+  const hasConvertedCost = Number.isFinite(Number(ev?.cost));
+  const currency = String(ev?.currency || (hasConvertedCost ? fallbackCurrency : "USD") || "GBP").toUpperCase();
+  const amount = hasConvertedCost ? Number(ev?.cost) : Number(ev?.cost_usd) || 0;
+  const cost = formatMoney(amount, currency);
   return `${name} (${model}): ${promptTokens} in + ${completionTokens} out = ${totalTokens} tokens (~${cost})`;
 }
 
@@ -206,14 +227,18 @@ function appendUsage(out, label = "Usage") {
   const events = Array.isArray(out?.usage_events) ? out.usage_events : [];
   const total = out?.usage_total;
   if (!events.length && !total) return;
-  events.forEach((ev) => log(`${label}: ${formatUsageEvent(ev)}`));
+  const fallbackCurrency = String(total?.currency || settings.usageCurrency || "GBP").toUpperCase();
+  events.forEach((ev) => log(`${label}: ${formatUsageEvent(ev, fallbackCurrency)}`));
   if (total) {
     const promptTokens = Number(total?.prompt_tokens) || 0;
     const completionTokens = Number(total?.completion_tokens) || 0;
     const totalTokens = Number.isFinite(Number(total?.total_tokens))
       ? Number(total?.total_tokens)
       : promptTokens + completionTokens;
-    const cost = formatUsd(total?.cost_usd);
+    const hasConvertedCost = Number.isFinite(Number(total?.cost));
+    const currency = String(total?.currency || (hasConvertedCost ? fallbackCurrency : "USD")).toUpperCase();
+    const amount = hasConvertedCost ? Number(total?.cost) : Number(total?.cost_usd) || 0;
+    const cost = currency === "MIXED" ? `${amount.toFixed(5)} (mixed currency)` : formatMoney(amount, currency);
     log(`${label} total: ${promptTokens} in + ${completionTokens} out = ${totalTokens} tokens (~${cost})`);
   }
 }
@@ -653,6 +678,29 @@ function readAgentSelect(selectId) {
   return (select.value || "").trim();
 }
 
+function populateValueSelect(selectId, values, currentValue, defaultLabel = "Use server default") {
+  const select = $(selectId);
+  if (!select) return;
+  select.innerHTML = "";
+  const addOption = (value, label) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    select.appendChild(opt);
+  };
+  if (defaultLabel) addOption("", defaultLabel);
+  const normalized = Array.isArray(values)
+    ? values.map((val) => String(val || "").trim()).filter(Boolean)
+    : [];
+  const uniqValues = [...new Set(normalized)];
+  const current = String(currentValue || "").trim();
+  if (current && !uniqValues.includes(current)) {
+    addOption(current, `${current} (custom)`);
+  }
+  uniqValues.forEach((val) => addOption(val, val));
+  select.value = current;
+}
+
 const APP_BASE_PATH = (() => {
   const baseEl = document.querySelector("base");
   let basePath = baseEl?.getAttribute("href") || window.location.pathname || "/";
@@ -980,6 +1028,7 @@ function loadSettings() {
   settings.allowAiDiff = Boolean(settings.allowAiDiff);
   const conf = parseFloat(settings.helperMinConfidence);
   settings.helperMinConfidence = Number.isFinite(conf) ? Math.max(0, Math.min(1, conf)) : DEFAULT_SETTINGS.helperMinConfidence;
+  settings.usageCurrency = String(settings.usageCurrency || DEFAULT_SETTINGS.usageCurrency).toUpperCase();
   if (settings.compareTarget === "latest") settings.compareTarget = "version";
   applySettings();
 }
@@ -2032,6 +2081,7 @@ async function loadRuntimeSettingsIntoModal() {
       const allowDiffToggle = $("settingsAllowAiDiff");
       if (allowDiffToggle) allowDiffToggle.checked = Boolean(settings.allowAiDiff);
     }
+    settings.usageCurrency = String(out?.usage_currency || settings.usageCurrency || DEFAULT_SETTINGS.usageCurrency).toUpperCase();
 
     const agents = await loadConversationAgents();
     populateAgentSelect("settingsBuilderAgent", agents, out?.builder_agent_id || "");
@@ -2041,6 +2091,18 @@ async function loadRuntimeSettingsIntoModal() {
     populateAgentSelect("settingsSemanticDiffAgent", agents, out?.semantic_diff_agent_id || "");
     populateAgentSelect("settingsKbSyncAgent", agents, out?.kb_sync_helper_agent_id || "");
     populateAgentSelect("settingsDumbBuilderAgent", agents, out?.dumb_builder_agent_id || "");
+
+    const currencies = Array.isArray(out?.supported_currencies) && out.supported_currencies.length
+      ? out.supported_currencies.map((cur) => String(cur || "").toUpperCase()).filter(Boolean)
+      : ["GBP", "USD", "EUR", "CAD", "AUD"];
+    populateValueSelect("settingsUsageCurrency", currencies, settings.usageCurrency, "");
+
+    const models = Array.isArray(out?.pricing_models) && out.pricing_models.length
+      ? out.pricing_models.map((model) => String(model || "").trim()).filter(Boolean)
+      : ["gpt-5.2", "gpt-4o-mini"];
+    RUNTIME_MODEL_FIELDS.forEach((field) => {
+      populateValueSelect(field.selectId, models, out?.[field.key] || "", "Use server default");
+    });
   } catch (e) {
     // ignore admin endpoint errors
   }
@@ -2064,6 +2126,7 @@ function saveSettingsFromModal() {
   settings.helperMinConfidence = Number.isFinite(confValue)
     ? Math.max(0, Math.min(1, confValue))
     : DEFAULT_SETTINGS.helperMinConfidence;
+  settings.usageCurrency = String(readAgentSelect("settingsUsageCurrency") || settings.usageCurrency || DEFAULT_SETTINGS.usageCurrency).toUpperCase();
   localStorage.setItem("ui_settings", JSON.stringify(settings));
 
   const secret = $("settingsAgentSecret").value.trim();
@@ -2082,19 +2145,24 @@ function saveSettingsFromModal() {
 
 async function saveRuntimeSettingsFromModal() {
   try {
+    const payload = {
+      helper_min_confidence: settings.helperMinConfidence,
+      allow_ai_diff: settings.allowAiDiff,
+      usage_currency: settings.usageCurrency,
+      builder_agent_id: readAgentSelect("settingsBuilderAgent"),
+      architect_agent_id: readAgentSelect("settingsArchitectAgent"),
+      summary_agent_id: readAgentSelect("settingsSummaryAgent"),
+      capability_mapper_agent_id: readAgentSelect("settingsCapabilityMapperAgent"),
+      semantic_diff_agent_id: readAgentSelect("settingsSemanticDiffAgent"),
+      kb_sync_helper_agent_id: readAgentSelect("settingsKbSyncAgent"),
+      dumb_builder_agent_id: readAgentSelect("settingsDumbBuilderAgent"),
+    };
+    RUNTIME_MODEL_FIELDS.forEach((field) => {
+      payload[field.key] = readAgentSelect(field.selectId);
+    });
     await api("/api/admin/runtime", {
       method: "POST",
-      body: JSON.stringify({
-        helper_min_confidence: settings.helperMinConfidence,
-        allow_ai_diff: settings.allowAiDiff,
-        builder_agent_id: readAgentSelect("settingsBuilderAgent"),
-        architect_agent_id: readAgentSelect("settingsArchitectAgent"),
-        summary_agent_id: readAgentSelect("settingsSummaryAgent"),
-        capability_mapper_agent_id: readAgentSelect("settingsCapabilityMapperAgent"),
-        semantic_diff_agent_id: readAgentSelect("settingsSemanticDiffAgent"),
-        kb_sync_helper_agent_id: readAgentSelect("settingsKbSyncAgent"),
-        dumb_builder_agent_id: readAgentSelect("settingsDumbBuilderAgent"),
-      }),
+      body: JSON.stringify(payload),
     });
   } catch (e) {
     // ignore admin endpoint errors

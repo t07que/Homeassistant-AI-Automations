@@ -510,6 +510,50 @@ MODEL_COSTS_USD = {
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
 }
 
+CURRENCY_RATES_FROM_USD = {
+    "USD": 1.0,
+    "GBP": 0.79,
+    "EUR": 0.92,
+    "CAD": 1.36,
+    "AUD": 1.55,
+}
+DEFAULT_USAGE_CURRENCY = "GBP"
+USAGE_CURRENCY = DEFAULT_USAGE_CURRENCY
+
+DEFAULT_MODEL_BY_ROLE = {
+    "architect": "gpt-5.2",
+    "builder": "gpt-5.2",
+    "editor": "gpt-5.2",
+    "dumb_builder": "gpt-4o-mini",
+    "summary": "gpt-4o-mini",
+    "capability_mapper": "gpt-4o-mini",
+    "semantic_diff": "gpt-4o-mini",
+    "kb_sync_helper": "gpt-4o-mini",
+    "agent": "gpt-4o-mini",
+}
+ROLE_MODEL_CONFIG_KEYS = {
+    "builder": "builder_model",
+    "architect": "architect_model",
+    "editor": "editor_model",
+    "dumb_builder": "dumb_builder_model",
+    "summary": "summary_model",
+    "capability_mapper": "capability_mapper_model",
+    "semantic_diff": "semantic_diff_model",
+    "kb_sync_helper": "kb_sync_helper_model",
+}
+ROLE_MODEL_OVERRIDES: Dict[str, str] = dict(DEFAULT_MODEL_BY_ROLE)
+
+
+def _normalize_currency_code(value: Any) -> str:
+    code = str(value or DEFAULT_USAGE_CURRENCY).strip().upper()
+    if code in CURRENCY_RATES_FROM_USD:
+        return code
+    return DEFAULT_USAGE_CURRENCY
+
+
+def _currency_rate_from_usd(currency: str) -> float:
+    return float(CURRENCY_RATES_FROM_USD.get(_normalize_currency_code(currency), 1.0))
+
 
 def _agent_trace_start():
     return _AGENT_TRACE.set([])
@@ -545,12 +589,12 @@ def _role_for_agent(agent_id: str) -> str:
         return "kb_sync_helper"
     return "agent"
 
-def _suggested_model_for_agent(agent_id: str) -> str:
-    if agent_id in {ARCHITECT_AGENT_ID, BUILDER_AGENT_ID, AI_EDIT_AGENT_ID}:
-        return "gpt-5.2"
-    if agent_id in {DUMB_BUILDER_AGENT_ID, SUMMARY_AGENT_ID, CAPABILITY_MAPPER_AGENT_ID, SEMANTIC_DIFF_AGENT_ID, KB_SYNC_HELPER_AGENT_ID}:
-        return "gpt-4o-mini"
-    return "gpt-4o-mini"
+def _model_for_agent(agent_id: str) -> str:
+    role = _role_for_agent(agent_id)
+    override = str(ROLE_MODEL_OVERRIDES.get(role) or "").strip()
+    if override:
+        return override
+    return DEFAULT_MODEL_BY_ROLE.get(role) or DEFAULT_MODEL_BY_ROLE["agent"]
 
 def _estimate_tokens(text: str) -> int:
     if not text:
@@ -567,8 +611,10 @@ def _build_usage_event(agent_id: str, prompt_text: str, response_text: str, name
     prompt_tokens = _estimate_tokens(prompt_text)
     completion_tokens = _estimate_tokens(response_text)
     total_tokens = prompt_tokens + completion_tokens
-    model = _suggested_model_for_agent(agent_id)
+    model = _model_for_agent(agent_id)
     cost_usd = _usage_cost_usd(model, prompt_tokens, completion_tokens)
+    currency = _normalize_currency_code(USAGE_CURRENCY)
+    cost = cost_usd * _currency_rate_from_usd(currency)
     return {
         "name": name or _role_for_agent(agent_id),
         "agent_id": agent_id,
@@ -576,6 +622,8 @@ def _build_usage_event(agent_id: str, prompt_text: str, response_text: str, name
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
+        "currency": currency,
+        "cost": round(cost, 6),
         "cost_usd": round(cost_usd, 6),
     }
 
@@ -588,7 +636,11 @@ def _merge_usage(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> Di
     merged["prompt_tokens"] = int(a.get("prompt_tokens", 0)) + int(b.get("prompt_tokens", 0))
     merged["completion_tokens"] = int(a.get("completion_tokens", 0)) + int(b.get("completion_tokens", 0))
     merged["total_tokens"] = int(a.get("total_tokens", 0)) + int(b.get("total_tokens", 0))
+    merged["cost"] = round(float(a.get("cost", a.get("cost_usd", 0.0))) + float(b.get("cost", b.get("cost_usd", 0.0))), 6)
     merged["cost_usd"] = round(float(a.get("cost_usd", 0.0)) + float(b.get("cost_usd", 0.0)), 6)
+    currency_a = _normalize_currency_code(a.get("currency") or USAGE_CURRENCY)
+    currency_b = _normalize_currency_code(b.get("currency") or USAGE_CURRENCY)
+    merged["currency"] = currency_a if currency_a == currency_b else "mixed"
     model_a = a.get("model")
     model_b = b.get("model")
     merged["model"] = model_a if model_a == model_b else "mixed"
@@ -608,12 +660,24 @@ def _collect_usage_events(primary: Optional[Dict[str, Any]] = None, agent_status
                 events.append(usage)
     if extra:
         events.extend(extra)
-    total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cost_usd": 0.0}
+    total = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "currency": _normalize_currency_code(USAGE_CURRENCY),
+        "cost": 0.0,
+        "cost_usd": 0.0,
+    }
     for ev in events:
         total["prompt_tokens"] += int(ev.get("prompt_tokens", 0))
         total["completion_tokens"] += int(ev.get("completion_tokens", 0))
         total["total_tokens"] += int(ev.get("total_tokens", 0))
+        total["cost"] += float(ev.get("cost", ev.get("cost_usd", 0.0)))
         total["cost_usd"] += float(ev.get("cost_usd", 0.0))
+        ev_currency = _normalize_currency_code(ev.get("currency") or USAGE_CURRENCY)
+        if total["currency"] != ev_currency:
+            total["currency"] = "mixed"
+    total["cost"] = round(total["cost"], 6)
     total["cost_usd"] = round(total["cost_usd"], 6)
     return events, total
 
@@ -2007,6 +2071,7 @@ def _apply_runtime_config(cfg: Dict[str, Any]) -> None:
     global BUILDER_AGENT_ID, ARCHITECT_AGENT_ID, SUMMARY_AGENT_ID
     global CAPABILITY_MAPPER_AGENT_ID, SEMANTIC_DIFF_AGENT_ID, KB_SYNC_HELPER_AGENT_ID
     global DUMB_BUILDER_AGENT_ID, AI_EDIT_AGENT_ID
+    global USAGE_CURRENCY, ROLE_MODEL_OVERRIDES
     if not isinstance(cfg, dict):
         return
     if "helper_min_confidence" in cfg:
@@ -2034,6 +2099,12 @@ def _apply_runtime_config(cfg: Dict[str, Any]) -> None:
     DUMB_BUILDER_AGENT_ID = _apply_agent("dumb_builder_agent_id", DUMB_BUILDER_AGENT_ID)
     # Keep edit agent aligned with builder unless explicitly overridden elsewhere.
     AI_EDIT_AGENT_ID = BUILDER_AGENT_ID
+    if "usage_currency" in cfg:
+        USAGE_CURRENCY = _normalize_currency_code(cfg.get("usage_currency"))
+    for role, key in ROLE_MODEL_CONFIG_KEYS.items():
+        if key in cfg:
+            model_value = str(cfg.get(key) or "").strip()
+            ROLE_MODEL_OVERRIDES[role] = model_value or DEFAULT_MODEL_BY_ROLE.get(role, DEFAULT_MODEL_BY_ROLE["agent"])
 
 
 _apply_runtime_config(_load_runtime_config())
@@ -3479,6 +3550,10 @@ def api_admin_agent_check(x_ha_agent_secret: str = Header(default="")):
 @app.get("/api/admin/runtime")
 def api_admin_runtime_get(x_ha_agent_secret: str = Header(default="")):
     require_auth(x_ha_agent_secret)
+    runtime_models = {
+        key: ROLE_MODEL_OVERRIDES.get(role, DEFAULT_MODEL_BY_ROLE.get(role, DEFAULT_MODEL_BY_ROLE["agent"]))
+        for role, key in ROLE_MODEL_CONFIG_KEYS.items()
+    }
     return {
         "ok": True,
         "helper_min_confidence": HELPER_MIN_CONFIDENCE,
@@ -3490,6 +3565,10 @@ def api_admin_runtime_get(x_ha_agent_secret: str = Header(default="")):
         "semantic_diff_agent_id": SEMANTIC_DIFF_AGENT_ID,
         "kb_sync_helper_agent_id": KB_SYNC_HELPER_AGENT_ID,
         "dumb_builder_agent_id": DUMB_BUILDER_AGENT_ID,
+        "usage_currency": USAGE_CURRENCY,
+        "supported_currencies": sorted(CURRENCY_RATES_FROM_USD.keys()),
+        "pricing_models": sorted(MODEL_COSTS_USD.keys()),
+        **runtime_models,
     }
 
 @app.post("/api/admin/runtime")
@@ -3498,6 +3577,10 @@ def api_admin_runtime_set(
     x_ha_agent_secret: str = Header(default="")
 ):
     require_auth(x_ha_agent_secret)
+    runtime_models = {
+        key: ROLE_MODEL_OVERRIDES.get(role, DEFAULT_MODEL_BY_ROLE.get(role, DEFAULT_MODEL_BY_ROLE["agent"]))
+        for role, key in ROLE_MODEL_CONFIG_KEYS.items()
+    }
     cfg = {
         "helper_min_confidence": HELPER_MIN_CONFIDENCE,
         "allow_ai_diff": ALLOW_AI_DIFF,
@@ -3508,6 +3591,8 @@ def api_admin_runtime_set(
         "semantic_diff_agent_id": SEMANTIC_DIFF_AGENT_ID,
         "kb_sync_helper_agent_id": KB_SYNC_HELPER_AGENT_ID,
         "dumb_builder_agent_id": DUMB_BUILDER_AGENT_ID,
+        "usage_currency": USAGE_CURRENCY,
+        **runtime_models,
     }
     if "helper_min_confidence" in body:
         try:
@@ -3529,9 +3614,18 @@ def api_admin_runtime_set(
     ]:
         if key in body:
             cfg[key] = str(body.get(key) or "").strip()
+    if "usage_currency" in body:
+        cfg["usage_currency"] = _normalize_currency_code(body.get("usage_currency"))
+    for _, key in ROLE_MODEL_CONFIG_KEYS.items():
+        if key in body:
+            cfg[key] = str(body.get(key) or "").strip()
 
     _apply_runtime_config(cfg)
     _save_runtime_config(cfg)
+    saved_models = {
+        key: ROLE_MODEL_OVERRIDES.get(role, DEFAULT_MODEL_BY_ROLE.get(role, DEFAULT_MODEL_BY_ROLE["agent"]))
+        for role, key in ROLE_MODEL_CONFIG_KEYS.items()
+    }
     return {
         "ok": True,
         "helper_min_confidence": HELPER_MIN_CONFIDENCE,
@@ -3543,6 +3637,10 @@ def api_admin_runtime_set(
         "semantic_diff_agent_id": SEMANTIC_DIFF_AGENT_ID,
         "kb_sync_helper_agent_id": KB_SYNC_HELPER_AGENT_ID,
         "dumb_builder_agent_id": DUMB_BUILDER_AGENT_ID,
+        "usage_currency": USAGE_CURRENCY,
+        "supported_currencies": sorted(CURRENCY_RATES_FROM_USD.keys()),
+        "pricing_models": sorted(MODEL_COSTS_USD.keys()),
+        **saved_models,
     }
 
 @app.get("/api/admin/conversation-agents")
