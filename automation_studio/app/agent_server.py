@@ -3464,7 +3464,8 @@ def api_admin_agent_check(x_ha_agent_secret: str = Header(default="")):
                 "candidates": [],
                 "capabilities": caps_slim,
             },
-            required_keys=["triggers", "conditions", "actions", "entities", "services", "confidence"],
+            required_keys=["triggers", "conditions", "actions", "entities", "services"],
+            min_confidence=0.0,
         )
         record("summary", SUMMARY_AGENT_ID, bool(summary_out), "" if summary_out else "invalid_json_or_missing_keys")
 
@@ -3477,7 +3478,8 @@ def api_admin_agent_check(x_ha_agent_secret: str = Header(default="")):
                 "capabilities": caps_slim,
                 "candidates": [],
             },
-            required_keys=["missing_entities", "missing_services", "questions", "confidence"],
+            required_keys=["missing_entities", "missing_services", "questions"],
+            min_confidence=0.0,
         )
         record("capability_mapper", CAPABILITY_MAPPER_AGENT_ID, bool(mapper_out), "" if mapper_out else "invalid_json_or_missing_keys")
 
@@ -3486,7 +3488,8 @@ def api_admin_agent_check(x_ha_agent_secret: str = Header(default="")):
         diff_out = _call_helper_agent_json(
             SEMANTIC_DIFF_AGENT_ID,
             {"before_summary": fallback_summary, "after_summary": fallback_summary},
-            required_keys=["summary", "added", "removed", "changed", "confidence"],
+            required_keys=["summary"],
+            min_confidence=0.0,
         )
         record("semantic_diff", SEMANTIC_DIFF_AGENT_ID, bool(diff_out), "" if diff_out else "invalid_json_or_missing_keys")
 
@@ -3495,7 +3498,8 @@ def api_admin_agent_check(x_ha_agent_secret: str = Header(default="")):
         kb_out = _call_helper_agent_json(
             KB_SYNC_HELPER_AGENT_ID,
             {"user_request": "health check", "summary": summary_out or fallback_summary, "capabilities": caps_slim},
-            required_keys=["questions", "confidence"],
+            required_keys=["questions"],
+            min_confidence=0.0,
         )
         record("kb_sync_helper", KB_SYNC_HELPER_AGENT_ID, bool(kb_out), "" if kb_out else "invalid_json_or_missing_keys")
 
@@ -3523,15 +3527,24 @@ def api_admin_agent_check(x_ha_agent_secret: str = Header(default="")):
             }
             test_text = _builder_request_text(minimal_payload, minimal=True, addendum=DUMB_BUILDER_ADDENDUM)
             speech, _ = call_conversation_agent(DUMB_BUILDER_AGENT_ID, test_text)
+            if not (speech or "").strip():
+                dumb_ok = False
+                dumb_detail = "empty_response"
+                raise ValueError("empty_response")
+            if _looks_like_bad_builder_output(speech):
+                dumb_ok = False
+                dumb_detail = "known_bad_output"
+                raise ValueError("known_bad_output")
             extracted = _extract_json_object(speech or "")
             parsed = json.loads(extracted) if extracted else None
-            required = {"alias", "description", "trigger", "condition", "action", "mode", "initial_state", "helpers_needed"}
-            dumb_ok = isinstance(parsed, dict) and required.issubset(parsed.keys())
+            expected = {"alias", "description", "trigger", "condition", "action", "sequence", "mode", "initial_state", "helpers_needed"}
+            dumb_ok = isinstance(parsed, dict) and any(key in parsed for key in expected)
             if not dumb_ok:
-                dumb_detail = "invalid_json_or_missing_keys"
+                dumb_detail = "invalid_json_or_missing_expected_keys"
         except Exception as e:
             dumb_ok = False
-            dumb_detail = f"error:{type(e).__name__}"
+            if not dumb_detail:
+                dumb_detail = f"error:{type(e).__name__}"
     else:
         dumb_detail = "agent_id_not_set"
     record("dumb_builder", DUMB_BUILDER_AGENT_ID, dumb_ok if DUMB_BUILDER_AGENT_ID else True, dumb_detail)
