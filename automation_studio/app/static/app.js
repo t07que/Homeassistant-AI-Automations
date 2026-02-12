@@ -96,9 +96,12 @@ const DEFAULT_SETTINGS = {
 };
 let settings = { ...DEFAULT_SETTINGS };
 let collapsedCards = new Set();
+let hiddenCards = new Set();
 let _enableTimer;
 let _confirmResolver;
 const AI_COLLAPSE_KEY = "ai_section_collapsed";
+const HIDDEN_CARDS_KEY = "hidden_cards_v1";
+const VIEW_MENU_CARD_IDS = ["activity", "usage", "versions"];
 
 const LAYOUT_STORAGE_KEY = "ui_layout_v1";
 const DEFAULT_LAYOUT = {
@@ -616,11 +619,14 @@ function isRequestCancelledError(err) {
 }
 
 function updateStopRequestsButton() {
-  const btn = $("stopRequestsBtn");
-  if (!btn) return;
   const count = ACTIVE_REQUESTS.size;
-  btn.disabled = count === 0;
-  btn.textContent = count > 0 ? `Stop (${count})` : "Stop";
+  const label = count > 0 ? `Stop (${count})` : "Stop";
+  ["stopRequestsBtn", "aiStopBtn", "aiStopBtnExpanded"].forEach((id) => {
+    const btn = $(id);
+    if (!btn) return;
+    btn.disabled = count === 0;
+    btn.textContent = label;
+  });
 }
 
 function abortAllActiveRequests() {
@@ -1033,6 +1039,10 @@ function renderList() {
   for (const it of items) {
     const isDisabled = isAutomation() && isAutomationDisabled(it);
     const isSelected = selectedForCombine.has(String(it.id || ""));
+    const stateLabel = isAutomation() ? (isDisabled ? "Disabled" : "Enabled") : "Script";
+    const stateClass = isAutomation()
+      ? (isDisabled ? "badge-disabled" : "badge-enabled")
+      : "";
     const div = document.createElement("div");
     div.className = "item"
       + (it.id === state.activeId ? " active" : "")
@@ -1053,11 +1063,11 @@ function renderList() {
               <input class="item-select" type="checkbox" data-combine-id="${escapeHtml(it.id)}" ${isSelected ? "checked" : ""} />
             </label>
           ` : ""}
+          <div class="item-action-stack">
+            <span class="badge ${stateClass}">${stateLabel}</span>
+            <button class="item-toggle" data-action="toggle">Details</button>
+          </div>
           <div class="item-title">${escapeHtml(it.alias || it.name || it.id)}</div>
-        </div>
-        <div class="item-actions">
-          ${isDisabled ? `<span class="badge badge-disabled">Disabled</span>` : ""}
-          <button class="item-toggle" data-action="toggle">Details</button>
         </div>
       </div>
       <div class="item-details">
@@ -2197,6 +2207,34 @@ function applyCollapsedCards() {
   syncViewMenuToggleState();
 }
 
+function loadHiddenCards() {
+  try {
+    const raw = localStorage.getItem(HIDDEN_CARDS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    hiddenCards = new Set(Array.isArray(arr) ? arr : []);
+  } catch (e) {
+    hiddenCards = new Set();
+  }
+}
+
+function setCardVisible(id, visible, persist = true) {
+  const card = document.querySelector(`.card[data-card="${id}"]`);
+  if (!card) return;
+  card.hidden = !visible;
+  if (persist) {
+    if (visible) hiddenCards.delete(id);
+    else hiddenCards.add(id);
+    localStorage.setItem(HIDDEN_CARDS_KEY, JSON.stringify([...hiddenCards]));
+  }
+  syncViewMenuToggleState();
+}
+
+function applyCardVisibility() {
+  loadHiddenCards();
+  VIEW_MENU_CARD_IDS.forEach((id) => setCardVisible(id, !hiddenCards.has(id), false));
+  syncViewMenuToggleState();
+}
+
 function updateSidebarTabs() {
   const autoTab = $("tabAutomations");
   const scriptTab = $("tabScripts");
@@ -2649,7 +2687,7 @@ async function activateTab(id) {
 function isCardVisible(cardId) {
   const card = document.querySelector(`.card[data-card="${cardId}"]`);
   if (!card) return false;
-  return !card.classList.contains("collapsed");
+  return !card.hidden;
 }
 
 function syncViewMenuToggleState() {
@@ -4797,8 +4835,10 @@ function wireUI() {
       log(err.message || err);
     }
   };
-  const stopRequestsBtn = $("stopRequestsBtn");
-  if (stopRequestsBtn) stopRequestsBtn.onclick = () => abortAllActiveRequests();
+  ["stopRequestsBtn", "aiStopBtn", "aiStopBtnExpanded"].forEach((id) => {
+    const btn = $(id);
+    if (btn) btn.onclick = () => abortAllActiveRequests();
+  });
   updateStopRequestsButton();
   const viewMenuBtn = $("viewMenuBtn");
   const viewMenu = $("viewMenu");
@@ -4818,9 +4858,9 @@ function wireUI() {
   bindViewToggle("viewToggleSidebar", (show) => setSidebarCollapsed(!show));
   bindViewToggle("viewToggleAi", (show) => setAiCollapsed(!show));
   bindViewToggle("viewToggleRightRail", (show) => setRailCollapsed(!show));
-  bindViewToggle("viewToggleActivity", (show) => setCardCollapsed("activity", !show, true));
-  bindViewToggle("viewToggleUsage", (show) => setCardCollapsed("usage", !show, true));
-  bindViewToggle("viewToggleVersions", (show) => setCardCollapsed("versions", !show, true));
+  bindViewToggle("viewToggleActivity", (show) => setCardVisible("activity", show, true));
+  bindViewToggle("viewToggleUsage", (show) => setCardVisible("usage", show, true));
+  bindViewToggle("viewToggleVersions", (show) => setCardVisible("versions", show, true));
   document.addEventListener("click", (e) => {
     const wrap = e.target?.closest?.(".view-menu-wrap");
     if (!wrap) setViewMenuOpen(false);
@@ -5129,6 +5169,7 @@ async function boot() {
   loadAiCollapsed();
   setAiCollapsed(state.aiCollapsed, false);
   applyCollapsedCards();
+  applyCardVisibility();
   captureAiOutputHome();
   updateSidebarTabs();
   updateEntityUi();
