@@ -2348,10 +2348,7 @@ function updateEntityUi() {
       : "e.g. A script that sets movie lighting and turns on the TV...";
   }
 
-  const openInHaBtn = $("openInHaBtn");
-  if (openInHaBtn) {
-    openInHaBtn.textContent = isAutomation() ? "Open in HA" : "Open script in HA";
-  }
+  syncOpenInHaButtonMeta();
 
   if (!state.activeId) {
     $("aTitle").textContent = `Select a ${entityLabel()}`;
@@ -3728,6 +3725,7 @@ function setButtons(enabled) {
   });
   const openInHaBtn = $("openInHaBtn");
   if (openInHaBtn) openInHaBtn.disabled = !enabled;
+  syncOpenInHaButtonMeta();
   const toggleBtn = $("toggleEnableBtn");
   if (toggleBtn) {
     toggleBtn.disabled = !allowActions || !isAutomation() || state.compareTarget !== "current";
@@ -3872,21 +3870,41 @@ function getCurrentHaEditorTargetId() {
   return raw;
 }
 
+function getCurrentHaEditorUrl() {
+  const targetId = getCurrentHaEditorTargetId();
+  if (!targetId) return "";
+  const base = window.location.origin || "";
+  const path = isAutomation()
+    ? `/config/automation/edit/${encodeURIComponent(targetId)}`
+    : `/config/script/edit/${encodeURIComponent(targetId)}`;
+  return `${base}${path}`;
+}
+
+function syncOpenInHaButtonMeta() {
+  const btn = $("openInHaBtn");
+  if (!btn) return;
+  btn.textContent = isAutomation() ? "Open in HA" : "Open script in HA";
+  const url = getCurrentHaEditorUrl();
+  if (url) {
+    btn.title = url;
+    btn.setAttribute("aria-label", `${btn.textContent}: ${url}`);
+    return;
+  }
+  btn.title = `Select a ${entityLabel()} to open in Home Assistant`;
+  btn.setAttribute("aria-label", btn.textContent);
+}
+
 function openCurrentInHaEditor() {
   if (!state.activeId) {
     toast(`Select a ${entityLabel()} first.`);
     return;
   }
-  const targetId = getCurrentHaEditorTargetId();
-  if (!targetId) {
+  const url = getCurrentHaEditorUrl();
+  if (!url) {
     toast("Unable to determine Home Assistant editor link.");
     return;
   }
-  const base = window.location.origin || "";
-  const path = isAutomation()
-    ? `/config/automation/edit/${encodeURIComponent(targetId)}`
-    : `/config/script/edit/${encodeURIComponent(targetId)}`;
-  window.open(`${base}${path}`, "_blank", "noopener,noreferrer");
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function updateEnableButtonFromState(stateValue) {

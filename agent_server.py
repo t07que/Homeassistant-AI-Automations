@@ -5168,12 +5168,27 @@ async def api_architect_chat(
         prompt_parts.append(f"Context: You are planning a new {label}.")
 
     prompt_parts.append(
-        "Guidance: If the user does not specify exact entity_ids or services, infer them from the provided context "
-        "(CONTEXT_PACK_JSON or CAPABILITIES_JSON) and known candidates; make reasonable assumptions and proceed."
+        "Conversation protocol:\n"
+        "1) Prioritize the latest USER MESSAGE and explicit constraints from context; ignore unrelated historical details.\n"
+        "2) Build a concise intent snapshot first, then propose a concrete design (triggers, guards, actions, timing, anti-noise).\n"
+        "3) Ask up to 3 clarifying questions ONLY if they are blocking; otherwise state assumptions and move forward.\n"
+        "4) Never invent entity_ids or services. Use placeholders like <ENTITY_ID_HERE> when unknown."
     )
+    if mode == "combine":
+        prompt_parts.append(
+            "Combine-specific guidance: preserve behavior from all source automations unless explicitly overridden; "
+            "call out deduplication and conflict resolution clearly."
+        )
     prompt_parts.append(
-        "FORMAT: Use markdown-style hints for readability: start sections with '### Heading', use bullet lists "
-        "with '-' or numbered lists '1.', and use ##bold## for emphasis. Keep it concise."
+        "RESPONSE FORMAT (chat mode):\n"
+        "### Intent snapshot\n"
+        "- Summarize user goal, triggers, and desired outcomes.\n"
+        "### Proposed design\n"
+        "- Describe triggers, guards, actions, timing, anti-spam, and reliability choices.\n"
+        "### Clarifications needed (only if blocking)\n"
+        "1. Question\n"
+        "### Assumptions (if any)\n"
+        "- Assumption"
     )
 
     prompt_parts.append(f"USER MESSAGE:\n{text}")
@@ -5264,7 +5279,18 @@ async def api_architect_finalize(
         f"Write the FINAL BUILDER PROMPT as direct instructions to the builder agent for a Home Assistant {label}.",
         "Do NOT address the user. Do NOT ask questions. No commentary.",
         "Assume clarifications are complete. If details are missing, make the best reasonable assumptions and proceed.",
-        "Return ONLY the prompt text (plain instructions). Use readable formatting: '### Heading', bullet lists with '-', numbered lists '1.', and ##bold## for emphasis.",
+        "Return ONLY prompt text (plain instructions). No JSON/YAML. No markdown code fences.",
+        "Use this exact handoff structure with section headings:",
+        "### Build goal",
+        "### Scope (CREATE or EDIT or COMBINE)",
+        "### Required behavior",
+        "### Triggers",
+        "### Conditions and guards",
+        "### Actions",
+        "### Entities and services (confirmed and placeholders)",
+        "### Reliability and anti-noise rules",
+        "### Edge cases and assumptions",
+        "### Output contract for builder",
     ]
     summary_for_finalize = None
     if mode == "edit" and entity_id:
@@ -5280,6 +5306,10 @@ async def api_architect_finalize(
         finalize_parts.append("You must merge all provided source automations into one robust automation.")
         finalize_parts.append("SELECTED_AUTOMATION_IDS:\n" + json.dumps(combine_ids, ensure_ascii=False))
         finalize_parts.append("SOURCE_AUTOMATIONS_JSON:\n" + json.dumps(combine_source_summaries, ensure_ascii=False))
+        finalize_parts.append(
+            "In COMBINE scope, include a compact behavior mapping in '### Required behavior' showing for each source "
+            "automation id/alias what is preserved, deduplicated, or intentionally changed."
+        )
     if not req.conversation_id:
         try:
             entity_registry, device_registry, area_registry, states = await ha_ws_fetch()
@@ -5311,7 +5341,7 @@ async def api_architect_finalize(
         finalize_parts.append(f"{label_upper}_YAML:\n{req.current_yaml}")
     finalize_parts.append(
         "Guidance: If the user does not specify exact entity_ids or services, infer them from the provided context "
-        "(CONTEXT_PACK_JSON or CAPABILITIES_JSON) and known candidates; make reasonable assumptions."
+        "(CONTEXT_PACK_JSON or CAPABILITIES_JSON) and known candidates; make reasonable assumptions and write them explicitly."
     )
     if req.text:
         finalize_parts.append(f"USER MESSAGE:\n{req.text}")
