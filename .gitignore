@@ -17,6 +17,8 @@ summary_cache.json
 runtime_config.json
 automations.yaml
 scripts.yaml
+personal_home_context.private.txt
+automation_studio/app/personal_home_context.private.txt
 
 # Generated / runtime folders
 automation_versions/

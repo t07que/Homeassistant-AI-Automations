@@ -1,0 +1,23 @@
+# Private home context template (copy to personal_home_context.private.txt)
+# This file is safe to commit. Do not commit personal_home_context.private.txt.
+
+Confirmed entities:
+- input_select.<location_selector>
+- input_select.<occupied_room_selector>
+- calendar.<primary_calendar>
+- weather.<home_forecast_entity>
+- switch.<critical_device_switch>
+
+Rooms and lights:
+- Rooms: <Room A>, <Room B>, <Room C>
+- Group mappings: light.<room_group_entity>
+- Special lights: light.<specific_light_entity>
+
+Speech and style:
+- normal_announce_script: script.<normal_announce_script>
+- prompted_announce_script: script.<prompted_announce_script>
+- preferred_tone: <normal|sassy|prompted>
+
+Notes:
+- Keep IDs exact and verified.
+- Keep personal names, addresses, calendars, and helper scripts only in the private file.

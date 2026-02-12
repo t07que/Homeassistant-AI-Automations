@@ -23,9 +23,10 @@ LIGHTING RULES:
 
 ANNOUNCEMENT / SPEECH RULES:
 - Prefer capabilities.speech scripts for announcements:
-  - Normal: call capabilities.speech.normal_announce.entity_id (or script.alexa_notification_to_current_occupied_room) with data.message.
-  - Prompted/Jarvis/sassy/roast: call capabilities.speech.prompted_jarvis.entity_id (or script.prompt_on_jack_location_alexa_device) with data.prompt.
+  - Normal: call capabilities.speech.normal_announce.entity_id with data.message.
+  - Prompted/sassy/roast: call capabilities.speech.prompted_jarvis.entity_id with data.prompt.
 - If user explicitly asked for phone notifications, keep notify.mobile_app_* services. Use capabilities.notifications.primary_phone_notify if available.
+- Keep any home-specific fallback scripts in personal private context files, not in this public prompt.
 
 EDITING MODE RULES (when current_yaml is provided):
 - Preserve intent and structure unless the request requires changes.
