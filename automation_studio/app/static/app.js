@@ -636,6 +636,7 @@ const STATUS_CLASS_LIST = ["architect", "builder", "handoff", "kb", "summary"];
 const ACTIVE_REQUESTS = new Map();
 let ACTIVE_REQUEST_SEQ = 0;
 const STATUS_CYCLES = new Map();
+const STATUS_TIMERS = new Map();
 
 function isRequestCancelledError(err) {
   if (!err) return false;
@@ -682,6 +683,68 @@ function statusTargetIds(targetId) {
   return ids;
 }
 
+function formatStatusElapsed(ms) {
+  const totalSec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  const mm = String(mins).padStart(2, "0");
+  const ss = String(secs).padStart(2, "0");
+  return `${mm}:${ss}`;
+}
+
+function renderStatusLabel(id) {
+  const box = $(id);
+  if (!box) return;
+  const label = box.querySelector(".ai-status-text");
+  if (!label) return;
+  const baseText = String(box.dataset.statusText || "").trim();
+  const startedAt = Number(box.dataset.statusStartedAt || 0);
+  if (!baseText) {
+    label.textContent = "";
+    return;
+  }
+  if (!startedAt) {
+    label.textContent = baseText;
+    return;
+  }
+  label.textContent = `${baseText} · ${formatStatusElapsed(Date.now() - startedAt)}`;
+}
+
+function ensureStatusTimer(targetId) {
+  const ids = statusTargetIds(targetId);
+  if (!ids.length) return;
+  const startedAt = Date.now();
+  ids.forEach((id) => {
+    const box = $(id);
+    if (!box) return;
+    if (!box.dataset.statusStartedAt) {
+      box.dataset.statusStartedAt = String(startedAt);
+    }
+  });
+  const hasTimer = ids.some((id) => STATUS_TIMERS.has(id));
+  if (hasTimer) {
+    ids.forEach((id) => renderStatusLabel(id));
+    return;
+  }
+  const timer = setInterval(() => {
+    ids.forEach((id) => renderStatusLabel(id));
+  }, 1000);
+  ids.forEach((id) => STATUS_TIMERS.set(id, timer));
+}
+
+function stopStatusTimer(targetId) {
+  statusTargetIds(targetId).forEach((id) => {
+    const timer = STATUS_TIMERS.get(id);
+    if (timer) {
+      clearInterval(timer);
+      STATUS_TIMERS.delete(id);
+    }
+    const box = $(id);
+    if (!box) return;
+    delete box.dataset.statusStartedAt;
+  });
+}
+
 function setStatusCycling(targetId, isCycling) {
   statusTargetIds(targetId).forEach((id) => {
     const box = $(id);
@@ -717,6 +780,38 @@ function startStatusCycle(targetId, steps, intervalMs = 1100) {
   return () => stopStatusCycle(targetId);
 }
 
+function startStatusSequence(targetId, steps, intervalMs = 2100) {
+  if (!Array.isArray(steps) || !steps.length) return () => {};
+  stopStatusCycle(targetId);
+  let idx = 0;
+  const lastIdx = steps.length - 1;
+  const apply = () => {
+    const step = steps[Math.min(idx, lastIdx)] || {};
+    setStatus(targetId, step.type || "architect", step.text || "");
+  };
+  apply();
+  if (lastIdx <= 0) return () => stopStatusCycle(targetId);
+
+  const timer = setInterval(() => {
+    if (idx >= lastIdx) {
+      clearInterval(timer);
+      statusTargetIds(targetId).forEach((id) => STATUS_CYCLES.delete(id));
+      setStatusCycling(targetId, false);
+      return;
+    }
+    idx += 1;
+    apply();
+    if (idx >= lastIdx) {
+      clearInterval(timer);
+      statusTargetIds(targetId).forEach((id) => STATUS_CYCLES.delete(id));
+      setStatusCycling(targetId, false);
+    }
+  }, Math.max(900, intervalMs || 2100));
+  statusTargetIds(targetId).forEach((id) => STATUS_CYCLES.set(id, timer));
+  setStatusCycling(targetId, true);
+  return () => stopStatusCycle(targetId);
+}
+
 function setStatus(targetId, type, text) {
   const ids = statusTargetIds(targetId);
   ids.forEach((id) => {
@@ -729,20 +824,22 @@ function setStatus(targetId, type, text) {
     if (icon) {
       icon.className = "ai-status-icon";
     }
-    const label = box.querySelector(".ai-status-text");
-    if (label) label.textContent = text || "";
-
+    box.dataset.statusText = text || "";
+    renderStatusLabel(id);
   });
+  ensureStatusTimer(targetId);
 }
 
 function clearStatus(targetId) {
   stopStatusCycle(targetId);
+  stopStatusTimer(targetId);
   const ids = statusTargetIds(targetId);
   ids.forEach((id) => {
     const box = $(id);
     if (!box) return;
     box.classList.remove("active");
     STATUS_CLASS_LIST.forEach((cls) => box.classList.remove(cls));
+    delete box.dataset.statusText;
     const label = box.querySelector(".ai-status-text");
     if (label) label.textContent = "";
   });
@@ -761,19 +858,28 @@ function agentStatusText(key, actionText, fallbackLabel) {
   const labelMap = {
     architect: "Architect",
     builder: "Builder",
-    kb_sync_helper: "Knowledgebase",
-    summary: "Editor",
+    kb_sync_helper: "Library Clerk",
+    summary: "Summarizer",
   };
   const label = fallbackLabel || labelMap[key] || "Agent";
   return `${label} ${actionText}`;
 }
 
-function startBuilderHandoff(statusId) {
-  return startStatusCycle(statusId, [
-    { type: "handoff", text: agentStatusText("architect", "preparing handoff...") },
-    { type: "builder", text: agentStatusText("builder", "building output...") },
-    { type: "summary", text: agentStatusText("summary", "reviewing output...") },
-  ], 980);
+function startBuilderHandoff(statusId, options = {}) {
+  const mode = String(options?.mode || "edit").toLowerCase();
+  const combineMode = mode === "combine";
+  const steps = [
+    { type: "architect", text: agentStatusText("architect", "designing the implementation plan...") },
+    { type: "kb", text: agentStatusText("kb_sync_helper", "indexing learned context...") },
+    {
+      type: "builder",
+      text: combineMode
+        ? agentStatusText("builder", "merging selected automations and building YAML...")
+        : agentStatusText("builder", "building YAML from the architect handoff..."),
+    },
+    { type: "summary", text: agentStatusText("summary", "producing summaries and final checks...") },
+  ];
+  return startStatusSequence(statusId, steps, 2300);
 }
 
 function normalizeAgentList(out) {
@@ -4244,7 +4350,7 @@ async function combineSelectedAutomations(options = {}) {
 
   let stopCycle = null;
   try {
-    stopCycle = startBuilderHandoff("aiStatus");
+    stopCycle = startBuilderHandoff("aiStatus", { mode: "combine" });
     if (adjustments) aiOutputAppend(adjustments, "user");
     aiOutputAppend(`Combine selected automations: ${ids.join(", ")}`, "system");
     aiOutputAppend("Combining and building one automation...", "system");
@@ -4335,7 +4441,7 @@ async function runCreateFromPrompt() {
   }
 
   try {
-    setStatus("createStatus", "architect", agentStatusText("architect", "thinking..."));
+    setStatus("createStatus", "architect", agentStatusText("architect", "designing the first pass..."));
     toast("Asking Architect...", 2500);
     createOutputAppend(text, "user");
     createOutputAppend("Sending to Architect...", "system");
@@ -4428,7 +4534,7 @@ async function createArchitectFinalize() {
       $("promptText").value = "";
     }
 
-    handoffTimer = startBuilderHandoff("createStatus");
+    handoffTimer = startBuilderHandoff("createStatus", { mode: "create" });
     toast("Handing off to Builder...", 2500);
 
     const out = await api(`/api/architect/finalize`, {
@@ -4645,7 +4751,7 @@ async function createNewFromAiPrompt() {
   let handoffTimer = null;
 
   try {
-    setStatus("aiStatus", "architect", agentStatusText("architect", "thinking..."));
+    setStatus("aiStatus", "architect", agentStatusText("architect", "designing the first pass..."));
     toast("Asking Architect...", 2500);
     aiOutputAppend(prompt, "user");
     aiOutputAppend("Sending to Architect...", "system");
@@ -4678,7 +4784,7 @@ async function createNewFromAiPrompt() {
     });
     if (!ok) return;
 
-    handoffTimer = startBuilderHandoff("aiStatus");
+    handoffTimer = startBuilderHandoff("aiStatus", { mode: "create" });
     aiOutputAppend("Handing off to Builder...", "system");
     const out = await api(`/api/architect/finalize`, {
       method: "POST",
@@ -4745,7 +4851,7 @@ async function aiArchitectChat() {
   }
 
   try {
-    setStatus("aiStatus", "architect", agentStatusText("architect", "thinking..."));
+    setStatus("aiStatus", "architect", agentStatusText("architect", "designing the first pass..."));
     aiOutputAppend(prompt, "user");
     aiOutputAppend("Sending to Architect...", "system");
     pushAiHistory("user", prompt);
@@ -4845,7 +4951,7 @@ async function aiArchitectFinalize(options = {}) {
       clearAiPrompts();
     }
 
-    handoffTimer = startBuilderHandoff("aiStatus");
+    handoffTimer = startBuilderHandoff("aiStatus", { mode });
     toast("Handing off to Builder...", 2500);
 
     const body = {
