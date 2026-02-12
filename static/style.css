@@ -738,6 +738,9 @@ body.ai-collapsed .row-splitter{
   flex-direction:column;
   min-height:160px;
 }
+.right-rail .card[hidden]{
+  display:none !important;
+}
 .right-rail .card-body{
   flex:1;
   min-height:0;
@@ -808,6 +811,9 @@ body.ai-collapsed .row-splitter{
 .card-toggle:hover{color: var(--text); background: rgba(255,255,255,.06)}
 .card.collapsed .card-body{display:none}
 .card.collapsed .card-title{border-bottom:0}
+.right-rail .card.collapsed{
+  min-height:0;
+}
 .muted{color:var(--muted); font-size:12px; line-height:1.35}
 .log{
   flex:1;
