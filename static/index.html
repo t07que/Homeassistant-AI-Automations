@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>HA Auto Agent - Automation Studio</title>
-  <link rel="stylesheet" href="static/style.css?v=0.1.27" />
+  <link rel="stylesheet" href="static/style.css?v=0.1.28" />
 
   <!-- CodeMirror (YAML editor) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
@@ -31,20 +31,22 @@
           <span id="connText">Connecting...</span>
         </div>
 
-        <div class="view-menu-wrap">
-          <button class="btn ghost" id="viewMenuBtn" type="button" aria-expanded="false" aria-controls="viewMenu">View</button>
-          <div class="view-menu" id="viewMenu" hidden>
-            <label class="view-menu-item"><input id="viewToggleSidebar" type="checkbox" /> Show list</label>
-            <label class="view-menu-item"><input id="viewToggleAi" type="checkbox" /> Show AI section</label>
-            <label class="view-menu-item"><input id="viewToggleRightRail" type="checkbox" /> Show right panel</label>
-            <label class="view-menu-item"><input id="viewToggleActivity" type="checkbox" /> Show activity</label>
-            <label class="view-menu-item"><input id="viewToggleUsage" type="checkbox" /> Show token usage</label>
-            <label class="view-menu-item"><input id="viewToggleVersions" type="checkbox" /> Show versions</label>
+        <div class="topbar-actions">
+          <div class="view-menu-wrap">
+            <button class="btn ghost topbar-btn" id="viewMenuBtn" type="button" aria-expanded="false" aria-controls="viewMenu">View</button>
+            <div class="view-menu" id="viewMenu" hidden>
+              <label class="view-menu-item"><input id="viewToggleSidebar" type="checkbox" /> Show list</label>
+              <label class="view-menu-item"><input id="viewToggleAi" type="checkbox" /> Show AI section</label>
+              <label class="view-menu-item"><input id="viewToggleRightRail" type="checkbox" /> Show right panel</label>
+              <label class="view-menu-item"><input id="viewToggleActivity" type="checkbox" /> Show activity</label>
+              <label class="view-menu-item"><input id="viewToggleUsage" type="checkbox" /> Show token usage</label>
+              <label class="view-menu-item"><input id="viewToggleVersions" type="checkbox" /> Show versions</label>
+            </div>
           </div>
-        </div>
 
-        <button class="btn ghost" id="settingsBtn" title="Settings">Settings</button>
-        <button class="btn" id="refreshBtn" title="Reload list">Refresh</button>
+          <button class="btn ghost topbar-btn" id="settingsBtn" title="Settings">Settings</button>
+          <button class="btn topbar-btn" id="refreshBtn" title="Reload list">Refresh</button>
+        </div>
       </div>
     </header>
 
@@ -92,15 +94,12 @@
             </div>
 
             <div class="panel-actions">
-              <div class="panel-layout-toggle">
-                <span class="panel-layout-label">Panels</span>
-                <button class="btn ghost panel-btn" data-toggle-sidebar title="Hide list">Hide list</button>
-                <button class="btn ghost panel-btn" data-toggle-rail title="Hide right panel">Hide right panel</button>
+              <div class="panel-kb-actions">
+                <button class="btn ghost panel-btn" id="capabilitiesBtn" type="button" aria-pressed="false" title="View capabilities knowledgebase">Knowledgebase</button>
+                <button class="btn ghost panel-btn" id="capabilitiesRefreshBtn" type="button" title="Refresh capabilities from Home Assistant" hidden>Refresh KB</button>
+                <button class="btn ghost panel-btn" id="capabilitiesSyncBtn" type="button" title="Update the knowledgebase from this automation">Update KB from this automation</button>
+                <button class="btn ghost panel-btn" id="capabilitiesLearnBtn" type="button" title="Add a knowledgebase note">Add to KB</button>
               </div>
-              <button class="btn ghost panel-btn" id="capabilitiesBtn" type="button" aria-pressed="false" title="View capabilities knowledgebase">Knowledgebase</button>
-              <button class="btn ghost panel-btn" id="capabilitiesRefreshBtn" type="button" title="Refresh capabilities from Home Assistant" hidden>Refresh KB</button>
-              <button class="btn ghost panel-btn" id="capabilitiesSyncBtn" type="button" title="Update the knowledgebase from this automation">Update KB from this automation</button>
-              <button class="btn ghost panel-btn" id="capabilitiesLearnBtn" type="button" title="Add a knowledgebase note">Add to KB</button>
               <button class="btn primary panel-btn" id="saveBtn" disabled>Save</button>
             </div>
           </div>
@@ -479,6 +478,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/diff/5.2.0/diff.min.js"></script>
-  <script src="static/app.js?v=0.1.27"></script>
+  <script src="static/app.js?v=0.1.28"></script>
 </body>
 </html>
