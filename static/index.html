@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>HA Auto Agent - Automation Studio</title>
-  <link rel="stylesheet" href="static/style.css?v=20260210b" />
+  <link rel="stylesheet" href="static/style.css?v=0.1.21" />
 
   <!-- CodeMirror (YAML editor) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
@@ -48,6 +48,7 @@
           <div class="search">
             <input id="searchInput" type="search" name="automation_search" placeholder="Search automations (alias/desc/id)..." autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" />
             <button class="btn tiny ghost" id="hideDisabledToggleBtn" type="button" aria-pressed="false">Hide disabled</button>
+            <button class="btn tiny ghost" id="combineBtn" type="button" disabled>Combine</button>
             <button class="iconbtn" id="clearSearchBtn" title="Clear">x</button>
           </div>
 
@@ -170,7 +171,10 @@
                 <div class="card log-card resizable-section" data-card="activity" data-section="activity" data-size-id="activity">
                   <div class="card-title">
                     <span>Activity</span>
-                    <button class="card-toggle" data-toggle="activity">Hide</button>
+                    <div class="card-title-actions">
+                      <button class="card-toggle" id="stopRequestsBtn" disabled>Stop</button>
+                      <button class="card-toggle" data-toggle="activity">Hide</button>
+                    </div>
                   </div>
                   <div class="card-body">
                     <div class="log" id="logBox"></div>
@@ -442,6 +446,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/diff/5.2.0/diff.min.js"></script>
-  <script src="static/app.js?v=0.1.20"></script>
+  <script src="static/app.js?v=0.1.21"></script>
 </body>
 </html>

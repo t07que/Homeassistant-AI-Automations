@@ -69,6 +69,7 @@ const state = {
   architectConversationId: null,
   architectContextSent: false,
   createArchitectConversationId: null,
+  combineSelectionIds: [],
 };
 
 // Temporary safety switches for remote access issues.
@@ -564,11 +565,89 @@ async function appendConversationHistory(entityId, entityType, conversationId, m
 }
 
 const STATUS_CLASS_LIST = ["architect", "builder", "handoff", "kb", "summary"];
+const ACTIVE_REQUESTS = new Map();
+let ACTIVE_REQUEST_SEQ = 0;
+const STATUS_CYCLES = new Map();
 
-function setStatus(targetId, type, text) {
+function isRequestCancelledError(err) {
+  if (!err) return false;
+  if (err.cancelled) return true;
+  if (err.name === "AbortError") return true;
+  const msg = String(err.message || err).toLowerCase();
+  return msg.includes("request cancelled") || msg.includes("abort");
+}
+
+function updateStopRequestsButton() {
+  const btn = $("stopRequestsBtn");
+  if (!btn) return;
+  const count = ACTIVE_REQUESTS.size;
+  btn.disabled = count === 0;
+  btn.textContent = count > 0 ? `Stop (${count})` : "Stop";
+}
+
+function abortAllActiveRequests() {
+  const count = ACTIVE_REQUESTS.size;
+  if (!count) {
+    toast("No active requests.");
+    return;
+  }
+  for (const controller of ACTIVE_REQUESTS.values()) {
+    try {
+      controller.abort();
+    } catch (err) {
+      // Ignore abort races.
+    }
+  }
+  clearStatus("aiStatus");
+  clearStatus("createStatus");
+  toast(`Stopped ${count} request${count === 1 ? "" : "s"}.`);
+  log(`Stopped ${count} active request${count === 1 ? "" : "s"}.`);
+}
+
+function statusTargetIds(targetId) {
   const ids = [targetId];
   if (targetId === "aiStatus" && $("aiStatusExpanded")) ids.push("aiStatusExpanded");
   if (targetId === "aiStatusExpanded" && $("aiStatus")) ids.push("aiStatus");
+  return ids;
+}
+
+function setStatusCycling(targetId, isCycling) {
+  statusTargetIds(targetId).forEach((id) => {
+    const box = $(id);
+    if (!box) return;
+    box.classList.toggle("cycling", Boolean(isCycling));
+  });
+}
+
+function stopStatusCycle(targetId) {
+  statusTargetIds(targetId).forEach((id) => {
+    const timer = STATUS_CYCLES.get(id);
+    if (timer) {
+      clearInterval(timer);
+      STATUS_CYCLES.delete(id);
+    }
+  });
+  setStatusCycling(targetId, false);
+}
+
+function startStatusCycle(targetId, steps, intervalMs = 1100) {
+  if (!Array.isArray(steps) || !steps.length) return () => {};
+  stopStatusCycle(targetId);
+  let idx = 0;
+  const tick = () => {
+    const step = steps[idx % steps.length] || {};
+    setStatus(targetId, step.type || "architect", step.text || "");
+    idx += 1;
+  };
+  tick();
+  const timer = setInterval(tick, Math.max(500, intervalMs || 1100));
+  statusTargetIds(targetId).forEach((id) => STATUS_CYCLES.set(id, timer));
+  setStatusCycling(targetId, true);
+  return () => stopStatusCycle(targetId);
+}
+
+function setStatus(targetId, type, text) {
+  const ids = statusTargetIds(targetId);
   ids.forEach((id) => {
     const box = $(id);
     if (!box) return;
@@ -586,9 +665,8 @@ function setStatus(targetId, type, text) {
 }
 
 function clearStatus(targetId) {
-  const ids = [targetId];
-  if (targetId === "aiStatus" && $("aiStatusExpanded")) ids.push("aiStatusExpanded");
-  if (targetId === "aiStatusExpanded" && $("aiStatus")) ids.push("aiStatus");
+  stopStatusCycle(targetId);
+  const ids = statusTargetIds(targetId);
   ids.forEach((id) => {
     const box = $(id);
     if (!box) return;
@@ -616,15 +694,15 @@ function agentStatusText(key, actionText, fallbackLabel) {
     summary: "Editor",
   };
   const label = fallbackLabel || labelMap[key] || "Agent";
-  const id = getAgentId(key);
-  return id ? `${label} (${id}) ${actionText}` : `${label} ${actionText}`;
+  return `${label} ${actionText}`;
 }
 
 function startBuilderHandoff(statusId) {
-  setStatus(statusId, "handoff", agentStatusText("architect", "handing over to Builder..."));
-  return setTimeout(() => {
-    setStatus(statusId, "builder", agentStatusText("builder", "building..."));
-  }, 650);
+  return startStatusCycle(statusId, [
+    { type: "handoff", text: agentStatusText("architect", "preparing handoff...") },
+    { type: "builder", text: agentStatusText("builder", "building output...") },
+    { type: "summary", text: agentStatusText("summary", "reviewing output...") },
+  ], 980);
 }
 
 function normalizeAgentList(out) {
@@ -730,34 +808,57 @@ function getAgentSecret() {
 }
 
 async function api(path, opts = {}) {
-  opts.headers = opts.headers || {};
+  const req = { ...opts, headers: { ...(opts.headers || {}) } };
   // FastAPI param x_ha_agent_secret accepts header "X-HA-AGENT-SECRET"
-  opts.headers["X-HA-AGENT-SECRET"] = getAgentSecret();
+  req.headers["X-HA-AGENT-SECRET"] = getAgentSecret();
 
   // If we're sending JSON, set content-type automatically.
   // (Don't set it for FormData; the browser will add boundaries.)
-  if (opts.body && typeof opts.body === "string" && !opts.headers["Content-Type"]) {
-    opts.headers["Content-Type"] = "application/json";
+  if (req.body && typeof req.body === "string" && !req.headers["Content-Type"]) {
+    req.headers["Content-Type"] = "application/json";
   }
-  if (opts.body && isFormData(opts.body)) {
+  if (req.body && isFormData(req.body)) {
     // Ensure we do NOT accidentally set JSON content-type
-    if (opts.headers["Content-Type"]) delete opts.headers["Content-Type"];
+    if (req.headers["Content-Type"]) delete req.headers["Content-Type"];
   }
 
-  const res = await fetch(withBasePath(path), opts);
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`);
+  const controller = new AbortController();
+  if (opts.signal) {
+    if (opts.signal.aborted) {
+      controller.abort();
+    } else {
+      opts.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
   }
+  req.signal = controller.signal;
+  const reqId = ++ACTIVE_REQUEST_SEQ;
+  ACTIVE_REQUESTS.set(reqId, controller);
+  updateStopRequestsButton();
 
-  const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
-    const data = await res.json();
-    appendUsage(data);
-    return data;
+  try {
+    const res = await fetch(withBasePath(path), req);
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`);
+    }
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      const data = await res.json();
+      appendUsage(data);
+      return data;
+    }
+    return await res.text();
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      const cancelled = new Error("Request cancelled.");
+      cancelled.cancelled = true;
+      throw cancelled;
+    }
+    throw err;
+  } finally {
+    ACTIVE_REQUESTS.delete(reqId);
+    updateStopRequestsButton();
   }
-  return await res.text();
 }
 
 function setConn(ok, label) {
@@ -778,8 +879,55 @@ function normalizeListPayload(data) {
   return [];
 }
 
+function getCombineSelectionIds() {
+  const vals = Array.isArray(state.combineSelectionIds) ? state.combineSelectionIds : [];
+  return [...new Set(vals.map((id) => String(id || "").trim()).filter(Boolean))];
+}
+
+function setCombineSelection(ids) {
+  state.combineSelectionIds = [...new Set((ids || []).map((id) => String(id || "").trim()).filter(Boolean))];
+  syncCombineButton();
+}
+
+function pruneCombineSelection() {
+  const known = new Set((state.list || []).map((it) => String(it?.id || "").trim()).filter(Boolean));
+  const next = getCombineSelectionIds().filter((id) => known.has(id));
+  if (next.length !== getCombineSelectionIds().length) {
+    setCombineSelection(next);
+  } else {
+    syncCombineButton();
+  }
+}
+
+function toggleCombineSelection(id, selected) {
+  const aid = String(id || "").trim();
+  if (!aid) return;
+  const current = getCombineSelectionIds();
+  const set = new Set(current);
+  if (selected) set.add(aid);
+  else set.delete(aid);
+  setCombineSelection([...set]);
+}
+
+function clearCombineSelection() {
+  if (!getCombineSelectionIds().length) return;
+  setCombineSelection([]);
+}
+
+function syncCombineButton() {
+  const btn = $("combineBtn");
+  if (!btn) return;
+  const count = getCombineSelectionIds().length;
+  const visible = isAutomation();
+  btn.hidden = !visible;
+  btn.disabled = !visible || state.capabilitiesView || count < 2;
+  btn.textContent = count > 0 ? `Combine (${count})` : "Combine";
+}
+
 function renderList() {
   const el = $("automationList");
+  pruneCombineSelection();
+  const selectedForCombine = new Set(getCombineSelectionIds());
   let items = state.list;
   if (settings.hideDisabled && isAutomation()) {
     items = items.filter((it) => !isAutomationDisabled(it) || it.id === state.activeId);
@@ -793,11 +941,16 @@ function renderList() {
   el.innerHTML = "";
   for (const it of items) {
     const isDisabled = isAutomation() && isAutomationDisabled(it);
+    const isSelected = selectedForCombine.has(String(it.id || ""));
     const div = document.createElement("div");
-    div.className = "item" + (it.id === state.activeId ? " active" : "") + (isDisabled ? " disabled" : "");
+    div.className = "item"
+      + (it.id === state.activeId ? " active" : "")
+      + (isDisabled ? " disabled" : "")
+      + (isSelected ? " combine-selected" : "");
     div.dataset.id = it.id;
     div.onclick = (e) => {
       if (e.target?.closest?.(".item-toggle")) return;
+      if (e.target?.closest?.(".item-select-wrap")) return;
       openAutomation(it.id);
     };
 
@@ -805,6 +958,11 @@ function renderList() {
       <div class="item-top">
         <div class="item-title">${escapeHtml(it.alias || it.name || it.id)}</div>
         <div style="display:flex; gap:6px; align-items:center;">
+          ${isAutomation() ? `
+            <label class="item-select-wrap" title="Select for combine">
+              <input class="item-select" type="checkbox" data-combine-id="${escapeHtml(it.id)}" ${isSelected ? "checked" : ""} />
+            </label>
+          ` : ""}
           ${isDisabled ? `<span class="badge badge-disabled">Disabled</span>` : ""}
           <button class="item-toggle" data-action="toggle">Details</button>
         </div>
@@ -814,8 +972,14 @@ function renderList() {
         <div class="item-desc" style="opacity:.75;margin-top:8px;">${escapeHtml(it.id)}</div>
       </div>
     `;
+    const check = div.querySelector(".item-select");
+    if (check) {
+      check.addEventListener("click", (e) => e.stopPropagation());
+      check.addEventListener("change", () => toggleCombineSelection(it.id, check.checked));
+    }
     el.appendChild(div);
   }
+  syncCombineButton();
 }
 
 function renderHealthPanel() {
@@ -2001,6 +2165,7 @@ function updateEntityUi() {
     $("aTitle").textContent = `Select a ${entityLabel()}`;
     $("aMeta").textContent = "Pick one from the list on the left.";
   }
+  syncCombineButton();
   updateArchitectActionState();
 }
 
@@ -2017,6 +2182,9 @@ function setEntityType(type) {
   state.lastActiveByType[state.entityType] = state.activeId;
 
   state.entityType = next;
+  if (next !== "automation") {
+    clearCombineSelection();
+  }
   state.tabs = state.tabsByType[next] || [];
   state.tabCache = state.tabCacheByType[next] || {};
   state.activeId = state.lastActiveByType[next] || null;
@@ -3338,6 +3506,7 @@ function setButtons(enabled) {
     toggleBtn.disabled = !allowActions || !isAutomation() || state.compareTarget !== "current";
   }
   updateArchitectActionState();
+  syncCombineButton();
 }
 
 function updateArchitectActionState() {
@@ -3578,6 +3747,10 @@ async function loadList() {
     log(`Loaded ${state.list.length} ${entityLabelPlural()}.`);
     return true;
   } catch (e) {
+    if (isRequestCancelledError(e)) {
+      log("List load cancelled.");
+      return false;
+    }
     if (requestId !== listRequestSeq) return false;
     const msg = String(e.message || e);
     if (msg.startsWith("412") || msg.includes("AUTOMATIONS_FILE_PATH") || msg.includes("SCRIPTS_FILE_PATH")) {
@@ -3617,6 +3790,10 @@ async function openAutomation(id) {
   try {
     data = await api(`${entityEndpoint()}/${encodeURIComponent(id)}`);
   } catch (e) {
+    if (isRequestCancelledError(e)) {
+      log(`Load cancelled for ${id}.`);
+      return;
+    }
     toast("Load failed - check log", 3500);
     log(`Load failed: ${e.message || e}`);
     return;
@@ -3729,6 +3906,88 @@ async function applyAutomation(options = {}) {
   }
 }
 
+async function combineSelectedAutomations() {
+  if (!isAutomation()) {
+    toast("Combine is only available for automations.");
+    return;
+  }
+  const ids = getCombineSelectionIds();
+  if (ids.length < 2) {
+    toast("Select at least two automations to combine.");
+    return;
+  }
+
+  const ok = await openConfirmModal({
+    title: "Combine automations",
+    subtitle: "Build one automation from selected items.",
+    message: `Combine ${ids.length} automations and disable the originals when complete?`,
+    confirmText: "Combine now",
+    confirmClass: "danger",
+  });
+  if (!ok) return;
+
+  const adjustments = window.prompt(
+    "Optional adjustments for the combined automation (leave blank to preserve current behavior):",
+    ""
+  );
+  if (adjustments === null) return;
+  const alias = window.prompt("Optional alias for the new combined automation:", "");
+  if (alias === null) return;
+
+  let stopCycle = null;
+  try {
+    stopCycle = startBuilderHandoff("aiStatus");
+    aiOutputAppend(`Combine selected automations: ${ids.join(", ")}`, "user");
+    aiOutputAppend("Combining and building one automation...", "system");
+    toast("Combining automations...", 2500);
+
+    const out = await api("/api/automations/combine", {
+      method: "POST",
+      body: JSON.stringify({
+        automation_ids: ids,
+        prompt: adjustments || "",
+        alias: (alias || "").trim() || null,
+        disable_redundant: true,
+      }),
+    });
+    const createdId = out?.automation_id || out?.entity_id || null;
+    const disabled = Array.isArray(out?.disabled_automations) ? out.disabled_automations : [];
+    const disableFailed = Array.isArray(out?.disable_failed) ? out.disable_failed : [];
+    aiOutputAppend(
+      `Combined ${ids.length} automations${createdId ? ` into ${createdId}` : ""}.`,
+      "assistant"
+    );
+    if (disabled.length) {
+      log(`Disabled redundant automations: ${disabled.join(", ")}`);
+    }
+    if (disableFailed.length) {
+      const detail = disableFailed
+        .map((item) => `${item?.id || "unknown"} (${item?.detail || "failed"})`)
+        .join(", ");
+      log(`Some automations could not be disabled: ${detail}`);
+    }
+
+    clearCombineSelection();
+    await loadList();
+    if (createdId) {
+      await openAutomation(createdId);
+    }
+    if (out?.yaml) await maybePromptMissingCapabilities(out.yaml);
+    toast("Combine complete.");
+  } catch (e) {
+    if (isRequestCancelledError(e)) {
+      log("Combine request cancelled.");
+      return;
+    }
+    toast("Combine failed - check log", 3500);
+    log(`Combine failed: ${e.message || e}`);
+    aiOutputAppend(`Error: ${e.message || e}`, "error");
+  } finally {
+    if (typeof stopCycle === "function") stopCycle();
+    clearStatus("aiStatus");
+  }
+}
+
 /* ------------------------------
    Modals + tabs
 -------------------------------- */
@@ -3789,6 +4048,10 @@ async function runCreateFromPrompt() {
     const finalizeBtn = $("createFinalizeBtn");
     if (finalizeBtn) finalizeBtn.disabled = false;
   } catch (e) {
+    if (isRequestCancelledError(e)) {
+      log("Architect create chat cancelled.");
+      return;
+    }
     toast("Architect chat failed - check log", 3500);
     log(`Architect chat failed: ${e.message || e}`);
     createOutputAppend(`Error: ${e.message || e}`, "error");
@@ -3903,11 +4166,15 @@ async function createArchitectFinalize() {
       await maybePromptMissingCapabilities(out.yaml);
     }
   } catch (e) {
+    if (isRequestCancelledError(e)) {
+      log("Builder handoff cancelled.");
+      return;
+    }
     toast("Builder handoff failed - check log", 3500);
     log(`Architect finalize failed: ${e.message || e}`);
     createOutputAppend(`Error: ${e.message || e}`, "error");
   } finally {
-    if (handoffTimer) clearTimeout(handoffTimer);
+    if (typeof handoffTimer === "function") handoffTimer();
     clearStatus("createStatus");
     updateCreateFinalizeState();
   }
@@ -4050,6 +4317,10 @@ async function aiImprove() {
     if (state.viewMode === "visual") scheduleVisualRender();
     await maybePromptMissingCapabilities(out.yaml);
   } catch (e) {
+    if (isRequestCancelledError(e)) {
+      log("AI update cancelled.");
+      return;
+    }
     toast("AI update failed - check log", 3500);
     log(`AI update failed: ${e.message || e}`);
     aiOutputAppend(`Error: ${e.message || e}`, "error");
@@ -4127,11 +4398,15 @@ async function createNewFromAiPrompt() {
       await openAutomation(newId);
     }
   } catch (e) {
+    if (isRequestCancelledError(e)) {
+      log("Create from AI cancelled.");
+      return;
+    }
     toast("Create failed - check log", 3500);
     log(`Create from AI failed: ${e.message || e}`);
     aiOutputAppend(`Error: ${e.message || e}`, "error");
   } finally {
-    if (handoffTimer) clearTimeout(handoffTimer);
+    if (typeof handoffTimer === "function") handoffTimer();
     clearStatus("aiStatus");
   }
 }
@@ -4192,6 +4467,10 @@ async function aiArchitectChat() {
     const finalizeBtn = $("aiFinalizeBtn");
     if (finalizeBtn) finalizeBtn.disabled = false;
   } catch (e) {
+    if (isRequestCancelledError(e)) {
+      log("Architect chat cancelled.");
+      return;
+    }
     toast("Architect chat failed - check log", 3500);
     log(`Architect chat failed: ${e.message || e}`);
     aiOutputAppend(`Error: ${e.message || e}`, "error");
@@ -4313,11 +4592,15 @@ async function aiArchitectFinalize(options = {}) {
       }
     }
   } catch (e) {
+    if (isRequestCancelledError(e)) {
+      log("Architect finalize cancelled.");
+      return;
+    }
     toast("Builder handoff failed - check log", 3500);
     log(`Architect finalize failed: ${e.message || e}`);
     aiOutputAppend(`Error: ${e.message || e}`, "error");
   } finally {
-    if (handoffTimer) clearTimeout(handoffTimer);
+    if (typeof handoffTimer === "function") handoffTimer();
     clearStatus("aiStatus");
     updateArchitectActionState();
   }
@@ -4340,6 +4623,9 @@ function wireUI() {
       log(err.message || err);
     }
   };
+  const stopRequestsBtn = $("stopRequestsBtn");
+  if (stopRequestsBtn) stopRequestsBtn.onclick = () => abortAllActiveRequests();
+  updateStopRequestsButton();
 
   document.querySelectorAll("[data-toggle-sidebar]").forEach((btn) => {
     btn.onclick = () => setSidebarCollapsed(!state.sidebarCollapsed);
@@ -4352,6 +4638,9 @@ function wireUI() {
   if (autoTab) autoTab.onclick = () => setEntityType("automation");
   const scriptTab = $("tabScripts");
   if (scriptTab) scriptTab.onclick = () => setEntityType("script");
+  const combineBtn = $("combineBtn");
+  if (combineBtn) combineBtn.onclick = () => combineSelectedAutomations();
+  syncCombineButton();
 
   $("viewYamlBtn").onclick = () => setViewMode("yaml");
   $("viewVisualBtn").onclick = () => setViewMode("visual");

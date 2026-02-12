@@ -744,6 +744,13 @@ class ArchitectFinalizeReq(BaseModel):
     text: Optional[str] = None
 
 
+class CombineAutomationsReq(BaseModel):
+    automation_ids: List[str]
+    prompt: Optional[str] = None
+    alias: Optional[str] = None
+    disable_redundant: Optional[bool] = True
+
+
 class AutomationUpdateReq(BaseModel):
     # UI will send the HA automation config object here
     config: Dict[str, Any]
@@ -3995,6 +4002,127 @@ def api_list_automations(
 
     items.sort(key=lambda x: str(x.get("alias") or ""))
     return {"items": items}
+
+
+@app.post("/api/automations/combine")
+async def api_combine_automations(req: CombineAutomationsReq):
+    ids: List[str] = []
+    seen = set()
+    for raw in req.automation_ids or []:
+        aid = str(raw or "").strip()
+        if not aid or aid in seen:
+            continue
+        seen.add(aid)
+        ids.append(aid)
+    if len(ids) < 2:
+        raise HTTPException(status_code=400, detail="Select at least two automations to combine")
+
+    automations_file = _get_automations_file_path()
+    if not automations_file and not (HA_URL and HA_TOKEN):
+        raise HTTPException(status_code=412, detail="AUTOMATIONS_FILE_PATH or HA_URL/HA_TOKEN not configured")
+
+    source_items: List[Dict[str, Any]] = []
+    missing_ids: List[str] = []
+    if automations_file:
+        for aid in ids:
+            item = _find_automation_in_file(automations_file, aid)
+            if not item:
+                missing_ids.append(aid)
+                continue
+            source_items.append({"id": aid, **item})
+    else:
+        for aid in ids:
+            item = _ha_get_automation(aid)
+            if not item:
+                missing_ids.append(aid)
+                continue
+            source_items.append({"id": aid, **item})
+    if missing_ids:
+        raise HTTPException(status_code=404, detail=f"Automations not found: {', '.join(missing_ids)}")
+
+    source_summaries: List[Dict[str, Any]] = []
+    for item in source_items:
+        aid = str(item.get("id") or "")
+        alias = str(item.get("alias") or aid or "automation")
+        yaml_text = _yaml_dump(item)
+        source_summaries.append({
+            "id": aid,
+            "alias": alias,
+            "description": str(item.get("description") or ""),
+            "summary": _summarize_yaml_for_prompt(req.prompt or "", yaml_text) or {},
+        })
+
+    combine_parts = [
+        "Task: Combine the provided Home Assistant automations into ONE automation.",
+        "Requirements:",
+        "- Preserve behavior from all source automations unless explicitly overridden by the user request.",
+        "- Deduplicate overlapping triggers, conditions, and repeated actions.",
+        "- Keep the output robust and readable (use choose/conditions as needed).",
+        "- Return a single complete automation config.",
+    ]
+    if req.prompt:
+        combine_parts.append(f"USER ADJUSTMENTS:\n{req.prompt}")
+    combine_parts.append("SOURCE_AUTOMATIONS_JSON:\n" + json.dumps(source_summaries, ensure_ascii=False))
+    combine_request = "\n\n".join(combine_parts)
+
+    ha_config, _, builder_usage = await build_ha_config_from_text(
+        combine_request,
+        source="combine",
+        entity_type="automation",
+    )
+
+    alias_override = str(req.alias or "").strip()
+    if alias_override:
+        ha_config["alias"] = alias_override
+
+    new_id = str(int(time.time() * 1000))
+    if automations_file:
+        existing_ids = {str(a.get("id") or "") for a in _read_automations_file(automations_file)}
+        while new_id in existing_ids:
+            new_id = str(int(new_id) + 1)
+    ha_config["id"] = new_id
+
+    yaml_text = _yaml_dump(ha_config)
+    note = f"combine:{','.join(ids)}"
+    if req.prompt:
+        note += f":{str(req.prompt)[:120]}"
+    out = api_apply_automation(new_id, body={"yaml": yaml_text, "note": note})
+    combined_id = out.get("automation_id", new_id)
+
+    disabled_ids: List[str] = []
+    disable_failed: List[Dict[str, str]] = []
+    if bool(req.disable_redundant):
+        if not (HA_URL and HA_TOKEN):
+            disable_failed = [
+                {"id": aid, "detail": "HA_URL/HA_TOKEN not configured"}
+                for aid in ids
+                if aid != combined_id
+            ]
+        else:
+            for aid in ids:
+                if aid == combined_id:
+                    continue
+                try:
+                    api_set_automation_state(aid, body={"state": "off"})
+                    disabled_ids.append(aid)
+                except HTTPException as e:
+                    disable_failed.append({"id": aid, "detail": str(e.detail or e.status_code)})
+                except Exception as e:
+                    disable_failed.append({"id": aid, "detail": str(e)})
+
+    usage_events, usage_total = _collect_usage_events(None, None, builder_usage)
+    return {
+        "ok": True,
+        "automation_id": combined_id,
+        "entity_id": combined_id,
+        "alias": ha_config.get("alias") or combined_id,
+        "yaml": yaml_text,
+        "combined_from": ids,
+        "disabled_automations": disabled_ids,
+        "disable_failed": disable_failed,
+        "usage_events": usage_events,
+        "usage_total": usage_total,
+    }
 
 # ----------------------------
 # API: Get automation YAML (from automations.yaml)
