@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>HA Auto Agent - Automation Studio</title>
-  <link rel="stylesheet" href="static/style.css?v=0.1.23" />
+  <link rel="stylesheet" href="static/style.css?v=0.1.24" />
 
   <!-- CodeMirror (YAML editor) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
@@ -29,6 +29,18 @@
         <div class="pill" id="connPill">
           <span class="dot" id="connDot"></span>
           <span id="connText">Connecting...</span>
+        </div>
+
+        <div class="view-menu-wrap">
+          <button class="btn ghost" id="viewMenuBtn" type="button" aria-expanded="false" aria-controls="viewMenu">View</button>
+          <div class="view-menu" id="viewMenu" hidden>
+            <label class="view-menu-item"><input id="viewToggleSidebar" type="checkbox" /> Show list</label>
+            <label class="view-menu-item"><input id="viewToggleAi" type="checkbox" /> Show AI section</label>
+            <label class="view-menu-item"><input id="viewToggleRightRail" type="checkbox" /> Show right panel</label>
+            <label class="view-menu-item"><input id="viewToggleActivity" type="checkbox" /> Show activity</label>
+            <label class="view-menu-item"><input id="viewToggleUsage" type="checkbox" /> Show token usage</label>
+            <label class="view-menu-item"><input id="viewToggleVersions" type="checkbox" /> Show versions</label>
+          </div>
         </div>
 
         <button class="btn ghost" id="settingsBtn" title="Settings">Settings</button>
@@ -182,6 +194,16 @@
                   </div>
                   <div class="card-body">
                     <div class="log" id="logBox"></div>
+                  </div>
+                </div>
+
+                <div class="card resizable-section" data-card="usage" data-section="usage" data-size-id="usage">
+                  <div class="card-title">
+                    <span>Token Usage</span>
+                    <button class="card-toggle" data-toggle="usage">Hide</button>
+                  </div>
+                  <div class="card-body">
+                    <div class="usage-chart" id="usageChart"></div>
                   </div>
                 </div>
 
@@ -453,6 +475,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/diff/5.2.0/diff.min.js"></script>
-  <script src="static/app.js?v=0.1.23"></script>
+  <script src="static/app.js?v=0.1.24"></script>
 </body>
 </html>

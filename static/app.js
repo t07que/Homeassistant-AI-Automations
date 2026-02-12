@@ -70,6 +70,7 @@ const state = {
   architectContextSent: false,
   createArchitectConversationId: null,
   combineSelectionIds: [],
+  usageSnapshot: null,
 };
 
 // Temporary safety switches for remote access issues.
@@ -105,7 +106,7 @@ const DEFAULT_LAYOUT = {
   sizes: {},
   order: {
     aiRow: ["ai_assist", "ai_output"],
-    rightRail: ["activity", "versions"],
+    rightRail: ["activity", "usage", "versions"],
   },
   columnSplit: { editorPct: 0.6 },
 };
@@ -228,6 +229,7 @@ function appendUsage(out, label = "Usage") {
   const events = Array.isArray(out?.usage_events) ? out.usage_events : [];
   const total = out?.usage_total;
   if (!events.length && !total) return;
+  updateUsageSnapshot(events, total, label);
   const fallbackCurrency = String(total?.currency || settings.usageCurrency || "GBP").toUpperCase();
   events.forEach((ev) => log(`${label}: ${formatUsageEvent(ev, fallbackCurrency)}`));
   if (total) {
@@ -242,6 +244,42 @@ function appendUsage(out, label = "Usage") {
     const cost = currency === "MIXED" ? `${amount.toFixed(5)} (mixed currency)` : formatMoney(amount, currency);
     log(`${label} total: ${promptTokens} in + ${completionTokens} out = ${totalTokens} tokens (~${cost})`);
   }
+}
+
+function updateUsageSnapshot(events, total, label = "Usage") {
+  const list = Array.isArray(events) ? events : [];
+  const mapped = list
+    .map((ev) => {
+      const name = String(ev?.name || ev?.agent_id || "agent");
+      const model = String(ev?.model || "");
+      const totalTokens = Number.isFinite(Number(ev?.total_tokens))
+        ? Number(ev?.total_tokens)
+        : (Number(ev?.prompt_tokens) || 0) + (Number(ev?.completion_tokens) || 0);
+      return { name, model, totalTokens: Math.max(0, Math.round(totalTokens)) };
+    })
+    .filter((ev) => ev.totalTokens > 0)
+    .sort((a, b) => b.totalTokens - a.totalTokens);
+
+  const promptTokens = Number(total?.prompt_tokens) || 0;
+  const completionTokens = Number(total?.completion_tokens) || 0;
+  const totalTokens = Number.isFinite(Number(total?.total_tokens))
+    ? Number(total?.total_tokens)
+    : promptTokens + completionTokens;
+  const hasConvertedCost = Number.isFinite(Number(total?.cost));
+  const currency = String(total?.currency || settings.usageCurrency || "GBP").toUpperCase();
+  const amount = hasConvertedCost ? Number(total?.cost) : Number(total?.cost_usd) || 0;
+
+  state.usageSnapshot = {
+    label: String(label || "Usage"),
+    at: Date.now(),
+    events: mapped,
+    totalTokens: Math.max(0, Math.round(totalTokens)),
+    promptTokens: Math.max(0, Math.round(promptTokens)),
+    completionTokens: Math.max(0, Math.round(completionTokens)),
+    currency,
+    amount,
+  };
+  renderUsageChart();
 }
 
 function appendAgentStatus(out, targetAppend, statusId, label = "Helpers") {
@@ -884,6 +922,10 @@ function getCombineSelectionIds() {
   return [...new Set(vals.map((id) => String(id || "").trim()).filter(Boolean))];
 }
 
+function isCombineModeActive() {
+  return isAutomation() && getCombineSelectionIds().length >= 2;
+}
+
 function getCombineSelectionSummary() {
   const ids = getCombineSelectionIds();
   if (!ids.length) return "";
@@ -902,12 +944,12 @@ function updateArchitectAssistCopy() {
   const promptExpanded = $("aiPromptExpanded");
   const count = getCombineSelectionIds().length;
 
-  if (isAutomation() && count >= 2) {
+  if (isCombineModeActive()) {
     const selectedText = getCombineSelectionSummary();
     const combinePlaceholder = `Add notes here to add or remove features from the combined ${entityLabel()}. Currently we are combining: ${selectedText}.`;
     if (heading) heading.textContent = "Combine these with the architect's assistance";
     if (hint) {
-      hint.textContent = `Selected ${count} automations. Add notes, then finalize to build one combined automation and disable redundant originals.`;
+      hint.textContent = `Selected ${count} automations. Type notes here, then click Finalize and build to combine into one and disable redundant originals automatically.`;
     }
     if (prompt) prompt.placeholder = combinePlaceholder;
     if (promptExpanded) promptExpanded.placeholder = combinePlaceholder;
@@ -1222,6 +1264,35 @@ function formatStamp(ts) {
   return String(ts);
 }
 
+function renderUsageChart() {
+  const box = $("usageChart");
+  if (!box) return;
+  const snap = state.usageSnapshot;
+  if (!snap || !Array.isArray(snap.events) || !snap.events.length) {
+    box.innerHTML = `<div class="usage-empty">No token usage yet.</div>`;
+    return;
+  }
+  const maxTokens = Math.max(1, ...snap.events.map((ev) => ev.totalTokens || 0));
+  const totalTokens = Number(snap.totalTokens) || 0;
+  const cost = formatMoney(Number(snap.amount) || 0, snap.currency || "GBP");
+  const stamp = new Date(snap.at || Date.now()).toLocaleTimeString();
+  let html = `<div class="usage-meta">${escapeHtml(snap.label)} - ${stamp}<br>Total: ${totalTokens} tokens (~${escapeHtml(cost)})</div>`;
+  snap.events.slice(0, 8).forEach((ev) => {
+    const pct = Math.max(4, Math.round((ev.totalTokens / maxTokens) * 100));
+    const name = ev.model ? `${ev.name} (${ev.model})` : ev.name;
+    html += `
+      <div class="usage-row">
+        <div class="usage-label">
+          <span class="usage-label-name">${escapeHtml(name)}</span>
+          <span class="usage-label-value">${ev.totalTokens}</span>
+        </div>
+        <div class="usage-bar"><span class="usage-bar-fill" style="width:${pct}%"></span></div>
+      </div>
+    `;
+  });
+  box.innerHTML = html;
+}
+
 function showSetupBanner() {
   const el = $("setupBanner");
   if (el) el.hidden = false;
@@ -1301,6 +1372,7 @@ function setAiCollapsed(collapsed, persist = true) {
   }
   applyColumnSplit();
   sizeEditorToWrap();
+  syncViewMenuToggleState();
 }
 
 function syncCapabilitiesUi() {
@@ -2116,11 +2188,13 @@ function setCardCollapsed(id, collapsed, persist = true) {
     else collapsedCards.delete(id);
     localStorage.setItem("collapsed_cards", JSON.stringify([...collapsedCards]));
   }
+  syncViewMenuToggleState();
 }
 
 function applyCollapsedCards() {
   loadCollapsedCards();
   collapsedCards.forEach((id) => setCardCollapsed(id, true, false));
+  syncViewMenuToggleState();
 }
 
 function updateSidebarTabs() {
@@ -2572,6 +2646,34 @@ async function activateTab(id) {
   await openAutomation(id);
 }
 
+function isCardVisible(cardId) {
+  const card = document.querySelector(`.card[data-card="${cardId}"]`);
+  if (!card) return false;
+  return !card.classList.contains("collapsed");
+}
+
+function syncViewMenuToggleState() {
+  const setChecked = (id, value) => {
+    const el = $(id);
+    if (el) el.checked = Boolean(value);
+  };
+  setChecked("viewToggleSidebar", !state.sidebarCollapsed);
+  setChecked("viewToggleAi", !state.aiCollapsed);
+  setChecked("viewToggleRightRail", !state.railCollapsed);
+  setChecked("viewToggleActivity", isCardVisible("activity"));
+  setChecked("viewToggleUsage", isCardVisible("usage"));
+  setChecked("viewToggleVersions", isCardVisible("versions"));
+}
+
+function setViewMenuOpen(open) {
+  const menu = $("viewMenu");
+  const btn = $("viewMenuBtn");
+  if (!menu || !btn) return;
+  const isOpen = Boolean(open);
+  menu.hidden = !isOpen;
+  btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+}
+
 function setSidebarCollapsed(collapsed) {
   state.sidebarCollapsed = collapsed;
   document.body.classList.toggle("sidebar-collapsed", collapsed);
@@ -2580,6 +2682,7 @@ function setSidebarCollapsed(collapsed) {
     btn.textContent = label;
     btn.title = label;
   });
+  syncViewMenuToggleState();
 }
 
 function setRailCollapsed(collapsed) {
@@ -2591,6 +2694,7 @@ function setRailCollapsed(collapsed) {
     btn.title = label;
   });
   relocateAiOutput();
+  syncViewMenuToggleState();
 }
 
 function captureAiOutputHome() {
@@ -3569,9 +3673,14 @@ function updateArchitectActionState() {
   const hasPrompt = Boolean(prompt);
   const hasConv = Boolean(state.architectConversationId);
   const isArchitect = state.aiMode === "architect";
+  const combineMode = isCombineModeActive();
 
   const planBtns = [$("aiPlanBtn"), $("aiPlanBtnExpanded")].filter(Boolean);
   const finalizeBtns = [$("aiFinalizeBtn"), $("aiFinalizeBtnExpanded")].filter(Boolean);
+  const finalizeLabel = combineMode ? "Finalize and combine" : "Finalize and build";
+  finalizeBtns.forEach((btn) => {
+    btn.textContent = finalizeLabel;
+  });
 
   if (state.capabilitiesView) {
     planBtns.forEach((btn) => (btn.disabled = true));
@@ -3588,10 +3697,10 @@ function updateArchitectActionState() {
     return;
   }
 
-  planBtns.forEach((btn) => (btn.disabled = !hasPrompt));
+  planBtns.forEach((btn) => (btn.disabled = combineMode || !hasPrompt));
   finalizeBtns.forEach((btn) => {
     btn.hidden = false;
-    btn.disabled = !(hasConv || hasPrompt);
+    btn.disabled = combineMode ? false : !(hasConv || hasPrompt);
   });
 }
 
@@ -3961,7 +4070,8 @@ async function applyAutomation(options = {}) {
   }
 }
 
-async function combineSelectedAutomations() {
+async function combineSelectedAutomations(options = {}) {
+  const opts = options && typeof options === "object" ? options : {};
   if (!isAutomation()) {
     toast("Combine is only available for automations.");
     return;
@@ -3981,18 +4091,16 @@ async function combineSelectedAutomations() {
   });
   if (!ok) return;
 
-  const adjustments = window.prompt(
-    "Optional adjustments for the combined automation (leave blank to preserve current behavior):",
-    ""
-  );
-  if (adjustments === null) return;
-  const alias = window.prompt("Optional alias for the new combined automation:", "");
-  if (alias === null) return;
+  const adjustments = typeof opts.adjustments === "string"
+    ? opts.adjustments.trim()
+    : (($("aiPrompt")?.value || "").trim());
+  const alias = typeof opts.alias === "string" ? opts.alias.trim() : "";
 
   let stopCycle = null;
   try {
     stopCycle = startBuilderHandoff("aiStatus");
-    aiOutputAppend(`Combine selected automations: ${ids.join(", ")}`, "user");
+    if (adjustments) aiOutputAppend(adjustments, "user");
+    aiOutputAppend(`Combine selected automations: ${ids.join(", ")}`, "system");
     aiOutputAppend("Combining and building one automation...", "system");
     toast("Combining automations...", 2500);
 
@@ -4023,6 +4131,9 @@ async function combineSelectedAutomations() {
     }
 
     clearCombineSelection();
+    if (opts.clearPrompt) {
+      clearAiPrompts();
+    }
     await loadList();
     if (createdId) {
       await openAutomation(createdId);
@@ -4542,6 +4653,14 @@ async function aiArchitectFinalize(options = {}) {
   const historyStart = state.aiHistory.length;
   let handoffTimer = null;
 
+  if (isCombineModeActive()) {
+    await combineSelectedAutomations({
+      adjustments: prompt,
+      clearPrompt: true,
+    });
+    return;
+  }
+
   if (forcePrompt && !prompt) {
     return toast("Write a prompt first.");
   }
@@ -4681,6 +4800,32 @@ function wireUI() {
   const stopRequestsBtn = $("stopRequestsBtn");
   if (stopRequestsBtn) stopRequestsBtn.onclick = () => abortAllActiveRequests();
   updateStopRequestsButton();
+  const viewMenuBtn = $("viewMenuBtn");
+  const viewMenu = $("viewMenu");
+  if (viewMenuBtn && viewMenu) {
+    viewMenuBtn.onclick = (e) => {
+      e.stopPropagation();
+      syncViewMenuToggleState();
+      setViewMenuOpen(viewMenu.hidden);
+    };
+    viewMenu.addEventListener("click", (e) => e.stopPropagation());
+  }
+  const bindViewToggle = (id, handler) => {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener("change", () => handler(Boolean(el.checked)));
+  };
+  bindViewToggle("viewToggleSidebar", (show) => setSidebarCollapsed(!show));
+  bindViewToggle("viewToggleAi", (show) => setAiCollapsed(!show));
+  bindViewToggle("viewToggleRightRail", (show) => setRailCollapsed(!show));
+  bindViewToggle("viewToggleActivity", (show) => setCardCollapsed("activity", !show, true));
+  bindViewToggle("viewToggleUsage", (show) => setCardCollapsed("usage", !show, true));
+  bindViewToggle("viewToggleVersions", (show) => setCardCollapsed("versions", !show, true));
+  document.addEventListener("click", (e) => {
+    const wrap = e.target?.closest?.(".view-menu-wrap");
+    if (!wrap) setViewMenuOpen(false);
+  });
+  syncViewMenuToggleState();
 
   document.querySelectorAll("[data-toggle-sidebar]").forEach((btn) => {
     btn.onclick = () => setSidebarCollapsed(!state.sidebarCollapsed);
@@ -4694,7 +4839,12 @@ function wireUI() {
   const scriptTab = $("tabScripts");
   if (scriptTab) scriptTab.onclick = () => setEntityType("script");
   const combineBtn = $("combineBtn");
-  if (combineBtn) combineBtn.onclick = () => combineSelectedAutomations();
+  if (combineBtn) {
+    combineBtn.onclick = () => combineSelectedAutomations({
+      adjustments: ($("aiPrompt")?.value || "").trim(),
+      clearPrompt: true,
+    });
+  }
   syncCombineButton();
 
   $("viewYamlBtn").onclick = () => setViewMode("yaml");
@@ -4896,6 +5046,7 @@ function wireUI() {
   // ESC closes modals
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    setViewMenuOpen(false);
     for (const id of ["createModal", "settingsModal", "architectModal"]) {
       const m = $(id);
       if (m.getAttribute("aria-hidden") === "false") closeModal(id);
@@ -4983,6 +5134,7 @@ async function boot() {
   updateEntityUi();
   renderHealthPanel();
   renderScenarioOutput();
+  renderUsageChart();
   setSidebarCollapsed(false);
   setRailCollapsed(false);
   setViewMode(settings.viewMode || "yaml");
