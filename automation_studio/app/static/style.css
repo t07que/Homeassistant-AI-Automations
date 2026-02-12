@@ -219,14 +219,16 @@ body{
   color:#eaf7ff;
   box-shadow: 0 0 0 2px rgba(3,169,244,.12);
 }
-#hideDisabledToggleBtn{
+#hideDisabledToggleBtn,
+#hideBlueprintsToggleBtn{
   display:inline-flex;
   align-items:center;
   gap:6px;
   padding:6px 10px;
   border-radius:12px;
 }
-#hideDisabledToggleBtn::before{
+#hideDisabledToggleBtn::before,
+#hideBlueprintsToggleBtn::before{
   content:"";
   width:8px;
   height:8px;
@@ -234,7 +236,8 @@ body{
   background: rgba(160,160,160,.5);
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
 }
-#hideDisabledToggleBtn.toggle-active::before{
+#hideDisabledToggleBtn.toggle-active::before,
+#hideBlueprintsToggleBtn.toggle-active::before{
   background: var(--ok);
   box-shadow: 0 0 0 2px rgba(0,200,83,.15);
 }
@@ -376,7 +379,7 @@ body{
   flex-direction:column;
   align-items:flex-start;
   gap:6px;
-  flex:0 0 76px;
+  flex:0 0 88px;
 }
 .item-title{
   font-weight:700;
@@ -395,7 +398,7 @@ body{
   padding:2px 6px;
   border-radius:8px;
   white-space:nowrap;
-  width:76px;
+  width:88px;
   text-align:left;
 }
 .item-toggle:hover{color: var(--text); background: rgba(255,255,255,.06)}
@@ -429,13 +432,18 @@ body{
   color:var(--muted);
   background: rgba(255,255,255,.03);
   white-space:nowrap;
-  min-width:76px;
+  min-width:88px;
   text-align:left;
 }
 .badge-enabled{
   border-color: rgba(123,216,143,.55);
   color:#c3ffd1;
   background: rgba(71,198,98,.14);
+}
+.badge-blueprint{
+  border-color: rgba(63,169,255,.65);
+  color:#c8ebff;
+  background: rgba(33,122,214,.16);
 }
 .badge-disabled{
   border-color: rgba(255,90,122,.55);

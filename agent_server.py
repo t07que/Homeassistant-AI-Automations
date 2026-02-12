@@ -731,6 +731,7 @@ class ArchitectChatReq(BaseModel):
     include_context: Optional[bool] = False
     mode: Optional[str] = None
     save_entity_hint: Optional[bool] = False
+    combine_automation_ids: Optional[List[str]] = None
 
 
 class ArchitectFinalizeReq(BaseModel):
@@ -742,6 +743,8 @@ class ArchitectFinalizeReq(BaseModel):
     include_context: Optional[bool] = False
     mode: Optional[str] = None
     text: Optional[str] = None
+    combine_automation_ids: Optional[List[str]] = None
+    disable_redundant: Optional[bool] = True
 
 
 class CombineAutomationsReq(BaseModel):
@@ -3988,12 +3991,18 @@ def api_list_automations(
             continue
         alias = a.get("alias") or aid
         state_info = state_by_id.get(aid) or state_by_slug.get(_slug(alias))
+        use_blueprint = a.get("use_blueprint")
+        blueprint_path = ""
+        if isinstance(use_blueprint, dict):
+            blueprint_path = str(use_blueprint.get("path") or "").strip()
         items.append({
             "id": aid,
             "alias": alias,
             "description": a.get("description") or "",
             "enabled": a.get("enabled"),
             "initial_state": a.get("initial_state"),
+            "is_blueprint": bool(use_blueprint),
+            "blueprint_path": blueprint_path,
             "state": state_info.get("state") if state_info else None,
             "entity_id": state_info.get("entity_id") if state_info else None,
             "source": "ha_file",
@@ -4011,25 +4020,22 @@ def api_list_automations(
     return {"items": items}
 
 
-@app.post("/api/automations/combine")
-async def api_combine_automations(req: CombineAutomationsReq):
+def _normalize_combine_automation_ids(raw_ids: Optional[List[str]]) -> List[str]:
     ids: List[str] = []
     seen = set()
-    for raw in req.automation_ids or []:
+    for raw in raw_ids or []:
         aid = str(raw or "").strip()
         if not aid or aid in seen:
             continue
         seen.add(aid)
         ids.append(aid)
-    if len(ids) < 2:
-        raise HTTPException(status_code=400, detail="Select at least two automations to combine")
+    return ids
 
-    automations_file = _get_automations_file_path()
-    if not automations_file and not (HA_URL and HA_TOKEN):
-        raise HTTPException(status_code=412, detail="AUTOMATIONS_FILE_PATH or HA_URL/HA_TOKEN not configured")
 
+def _load_source_automations_for_combine(ids: List[str]) -> Tuple[List[Dict[str, Any]], List[str]]:
     source_items: List[Dict[str, Any]] = []
     missing_ids: List[str] = []
+    automations_file = _get_automations_file_path()
     if automations_file:
         for aid in ids:
             item = _find_automation_in_file(automations_file, aid)
@@ -4044,9 +4050,10 @@ async def api_combine_automations(req: CombineAutomationsReq):
                 missing_ids.append(aid)
                 continue
             source_items.append({"id": aid, **item})
-    if missing_ids:
-        raise HTTPException(status_code=404, detail=f"Automations not found: {', '.join(missing_ids)}")
+    return source_items, missing_ids
 
+
+def _build_combine_source_summaries(source_items: List[Dict[str, Any]], prompt_text: str = "") -> List[Dict[str, Any]]:
     source_summaries: List[Dict[str, Any]] = []
     for item in source_items:
         aid = str(item.get("id") or "")
@@ -4056,8 +4063,26 @@ async def api_combine_automations(req: CombineAutomationsReq):
             "id": aid,
             "alias": alias,
             "description": str(item.get("description") or ""),
-            "summary": _summarize_yaml_for_prompt(req.prompt or "", yaml_text) or {},
+            "summary": _summarize_yaml_for_prompt(prompt_text or "", yaml_text) or {},
         })
+    return source_summaries
+
+
+@app.post("/api/automations/combine")
+async def api_combine_automations(req: CombineAutomationsReq):
+    ids = _normalize_combine_automation_ids(req.automation_ids)
+    if len(ids) < 2:
+        raise HTTPException(status_code=400, detail="Select at least two automations to combine")
+
+    automations_file = _get_automations_file_path()
+    if not automations_file and not (HA_URL and HA_TOKEN):
+        raise HTTPException(status_code=412, detail="AUTOMATIONS_FILE_PATH or HA_URL/HA_TOKEN not configured")
+
+    source_items, missing_ids = _load_source_automations_for_combine(ids)
+    if missing_ids:
+        raise HTTPException(status_code=404, detail=f"Automations not found: {', '.join(missing_ids)}")
+
+    source_summaries = _build_combine_source_summaries(source_items, req.prompt or "")
 
     combine_parts = [
         "Task: Combine the provided Home Assistant automations into ONE automation.",
@@ -5076,12 +5101,30 @@ async def api_architect_chat(
     if entity_type not in ("automation", "script"):
         entity_type = "automation"
     entity_id = req.entity_id or req.automation_id
-    mode = (req.mode or ("edit" if entity_id else "create")).lower()
+    combine_ids = _normalize_combine_automation_ids(req.combine_automation_ids)
+    mode = (req.mode or ("combine" if combine_ids else ("edit" if entity_id else "create"))).lower()
+    if mode not in {"edit", "create", "combine"}:
+        mode = "edit" if entity_id else "create"
+    if mode == "combine":
+        entity_type = "automation"
+        entity_id = None
+        if len(combine_ids) < 2:
+            raise HTTPException(status_code=400, detail="Select at least two automations to combine")
     label = "script" if entity_type == "script" else "automation"
     label_upper = label.upper()
 
     prompt_parts: List[str] = []
     context_pack: Optional[Dict[str, Any]] = None
+    combine_source_summaries: List[Dict[str, Any]] = []
+    if mode == "combine":
+        source_items, missing_ids = _load_source_automations_for_combine(combine_ids)
+        if missing_ids:
+            raise HTTPException(status_code=404, detail=f"Automations not found: {', '.join(missing_ids)}")
+        combine_source_summaries = _build_combine_source_summaries(source_items, text)
+        prompt_parts.append("Context: You are planning a COMBINED automation from multiple existing automations.")
+        prompt_parts.append("SELECTED_AUTOMATION_IDS:\n" + json.dumps(combine_ids, ensure_ascii=False))
+        prompt_parts.append("SOURCE_AUTOMATIONS_JSON:\n" + json.dumps(combine_source_summaries, ensure_ascii=False))
+
     if not req.conversation_id:
         try:
             entity_registry, device_registry, area_registry, states = await ha_ws_fetch()
@@ -5197,10 +5240,24 @@ async def api_architect_finalize(
     if entity_type not in ("automation", "script"):
         entity_type = "automation"
     entity_id = req.entity_id or req.automation_id
-    mode = (req.mode or ("edit" if entity_id else "create")).lower()
+    combine_ids = _normalize_combine_automation_ids(req.combine_automation_ids)
+    mode = (req.mode or ("combine" if combine_ids else ("edit" if entity_id else "create"))).lower()
+    if mode not in {"edit", "create", "combine"}:
+        mode = "edit" if entity_id else "create"
+    if mode == "combine":
+        entity_type = "automation"
+        entity_id = None
+        if len(combine_ids) < 2:
+            raise HTTPException(status_code=400, detail="Select at least two automations to combine")
     label = "script" if entity_type == "script" else "automation"
     label_upper = label.upper()
     context_pack = None
+    combine_source_summaries: List[Dict[str, Any]] = []
+    if mode == "combine":
+        source_items, missing_ids = _load_source_automations_for_combine(combine_ids)
+        if missing_ids:
+            raise HTTPException(status_code=404, detail=f"Automations not found: {', '.join(missing_ids)}")
+        combine_source_summaries = _build_combine_source_summaries(source_items, req.text or "")
 
     finalize_parts = [
         "We are ready to hand off to the builder agent.",
@@ -5218,6 +5275,11 @@ async def api_architect_finalize(
                 finalize_parts.append(f"Use the PROVIDED {label_upper} SUMMARY JSON as the base and modify it.")
             else:
                 finalize_parts.append(f"Use the PROVIDED {label_upper} YAML as the base and modify it.")
+    elif mode == "combine":
+        finalize_parts.append("This is a COMBINE request for multiple existing automations.")
+        finalize_parts.append("You must merge all provided source automations into one robust automation.")
+        finalize_parts.append("SELECTED_AUTOMATION_IDS:\n" + json.dumps(combine_ids, ensure_ascii=False))
+        finalize_parts.append("SOURCE_AUTOMATIONS_JSON:\n" + json.dumps(combine_source_summaries, ensure_ascii=False))
     if not req.conversation_id:
         try:
             entity_registry, device_registry, area_registry, states = await ha_ws_fetch()
@@ -5266,7 +5328,7 @@ async def api_architect_finalize(
     # Build config via builder agent
     ha_config, _, builder_usage = await build_ha_config_from_text(
         final_text,
-        source="architect",
+        source="combine" if mode == "combine" else "architect",
         current_yaml=req.current_yaml if mode == "edit" else None,
         entity_type=entity_type,
     )
@@ -5280,6 +5342,60 @@ async def api_architect_finalize(
         history_payload = _get_conversation_payload(_script_key(entity_id) if entity_type == "script" else entity_id)
     history_items = (history_payload or {}).get("conversation_history") if isinstance(history_payload, dict) else []
     saved_info = save_learned_from_history(history_items or [], req.text)
+
+    if mode == "combine":
+        automations_file = _get_automations_file_path()
+        new_id = str(int(time.time() * 1000))
+        if automations_file:
+            existing_ids = {str(a.get("id") or "") for a in _read_automations_file(automations_file)}
+            while new_id in existing_ids:
+                new_id = str(int(new_id) + 1)
+        ha_config["id"] = new_id
+        yaml_text = _yaml_dump(ha_config)
+        combine_note = f"combine_architect:{','.join(combine_ids)}"
+        if req.text:
+            combine_note += f":{str(req.text)[:120]}"
+        out = api_apply_automation(new_id, body={"yaml": yaml_text, "note": combine_note})
+        combined_id = out.get("automation_id", new_id)
+
+        disabled_ids: List[str] = []
+        disable_failed: List[Dict[str, str]] = []
+        if bool(req.disable_redundant):
+            if not (HA_URL and HA_TOKEN):
+                disable_failed = [
+                    {"id": aid, "detail": "HA_URL/HA_TOKEN not configured"}
+                    for aid in combine_ids
+                    if aid != combined_id
+                ]
+            else:
+                for aid in combine_ids:
+                    if aid == combined_id:
+                        continue
+                    try:
+                        api_set_automation_state(aid, body={"state": "off"})
+                        disabled_ids.append(aid)
+                    except HTTPException as e:
+                        disable_failed.append({"id": aid, "detail": str(e.detail or e.status_code)})
+                    except Exception as e:
+                        disable_failed.append({"id": aid, "detail": str(e)})
+
+        return {
+            "ok": True,
+            "conversation_id": conv_id,
+            "final_prompt": final_text,
+            "entity_type": "automation",
+            "entity_id": combined_id,
+            "automation_id": combined_id,
+            "alias": ha_config.get("alias") or combined_id,
+            "yaml": yaml_text,
+            "combined_from": combine_ids,
+            "disabled_automations": disabled_ids,
+            "disable_failed": disable_failed,
+            "agent_status": agent_status,
+            "usage_events": usage_events,
+            "usage_total": usage_total,
+            **saved_info,
+        }
 
     if entity_type == "script":
         if mode == "edit" and entity_id:

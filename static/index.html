@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>HA Auto Agent - Automation Studio</title>
-  <link rel="stylesheet" href="static/style.css?v=0.1.25" />
+  <link rel="stylesheet" href="static/style.css?v=0.1.26" />
 
   <!-- CodeMirror (YAML editor) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
@@ -64,6 +64,7 @@
             </div>
             <div class="search-controls">
               <button class="btn tiny ghost" id="hideDisabledToggleBtn" type="button" aria-pressed="false">Hide disabled</button>
+              <button class="btn tiny ghost" id="hideBlueprintsToggleBtn" type="button" aria-pressed="false">Hide blueprints</button>
               <button class="btn tiny ghost" id="combineBtn" type="button" disabled>Combine</button>
             </div>
           </div>
@@ -123,6 +124,7 @@
 
             <div class="panel-subright">
               <button class="btn" id="copyBtn" disabled>Copy YAML</button>
+              <button class="btn" id="openInHaBtn" disabled>Open in HA</button>
               <button class="btn" id="toggleEnableBtn" disabled>Disable</button>
             </div>
           </div>
@@ -477,6 +479,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/diff/5.2.0/diff.min.js"></script>
-  <script src="static/app.js?v=0.1.25"></script>
+  <script src="static/app.js?v=0.1.26"></script>
 </body>
 </html>

@@ -86,6 +86,7 @@ const DEFAULT_SETTINGS = {
   compareTarget: "current",
   compactList: false,
   hideDisabled: false,
+  hideBlueprints: false,
   autoOpenNew: true,
   filePath: "",
   invertPromptEnter: false,
@@ -1027,6 +1028,9 @@ function renderList() {
   if (settings.hideDisabled && isAutomation()) {
     items = items.filter((it) => !isAutomationDisabled(it) || it.id === state.activeId);
   }
+  if (settings.hideBlueprints && isAutomation()) {
+    items = items.filter((it) => !isBlueprintAutomation(it) || it.id === state.activeId);
+  }
 
   if (!items.length) {
     el.innerHTML = `<div class="empty">No matches.</div>`;
@@ -1038,6 +1042,7 @@ function renderList() {
   el.innerHTML = "";
   for (const it of items) {
     const isDisabled = isAutomation() && isAutomationDisabled(it);
+    const isBlueprint = isAutomation() && isBlueprintAutomation(it);
     const isSelected = selectedForCombine.has(String(it.id || ""));
     const stateLabel = isAutomation() ? (isDisabled ? "Disabled" : "Enabled") : "Script";
     const stateClass = isAutomation()
@@ -1065,6 +1070,7 @@ function renderList() {
           ` : ""}
           <div class="item-action-stack">
             <span class="badge ${stateClass}">${stateLabel}</span>
+            ${isBlueprint ? `<span class="badge badge-blueprint">Blueprint</span>` : ""}
             <button class="item-toggle" data-action="toggle">Details</button>
           </div>
           <div class="item-title">${escapeHtml(it.alias || it.name || it.id)}</div>
@@ -1072,6 +1078,7 @@ function renderList() {
       </div>
       <div class="item-details">
         <div class="item-desc">${escapeHtml(it.description || it.summary || "")}</div>
+        ${isBlueprint && it.blueprint_path ? `<div class="item-desc" style="opacity:.82;margin-top:6px;">Blueprint: ${escapeHtml(it.blueprint_path)}</div>` : ""}
         <div class="item-desc" style="opacity:.75;margin-top:8px;">${escapeHtml(it.id)}</div>
       </div>
     `;
@@ -1323,6 +1330,8 @@ function loadSettings() {
   }
   settings.tryLocalEditFirst = settings.tryLocalEditFirst !== false;
   settings.allowAiDiff = Boolean(settings.allowAiDiff);
+  settings.hideDisabled = Boolean(settings.hideDisabled);
+  settings.hideBlueprints = Boolean(settings.hideBlueprints);
   const conf = parseFloat(settings.helperMinConfidence);
   settings.helperMinConfidence = Number.isFinite(conf) ? Math.max(0, Math.min(1, conf)) : DEFAULT_SETTINGS.helperMinConfidence;
   settings.usageCurrency = String(settings.usageCurrency || DEFAULT_SETTINGS.usageCurrency).toUpperCase();
@@ -1333,6 +1342,7 @@ function loadSettings() {
 function applySettings() {
   document.body.classList.toggle("compact-list", Boolean(settings.compactList));
   syncHideDisabledToggle();
+  syncHideBlueprintsToggle();
 }
 
 function syncHideDisabledToggle() {
@@ -1342,6 +1352,15 @@ function syncHideDisabledToggle() {
   btn.classList.toggle("toggle-active", active);
   btn.setAttribute("aria-pressed", active ? "true" : "false");
   btn.textContent = active ? "Show disabled" : "Hide disabled";
+}
+
+function syncHideBlueprintsToggle() {
+  const btn = $("hideBlueprintsToggleBtn");
+  if (!btn) return;
+  const active = Boolean(settings.hideBlueprints);
+  btn.classList.toggle("toggle-active", active);
+  btn.setAttribute("aria-pressed", active ? "true" : "false");
+  btn.textContent = active ? "Show blueprints" : "Hide blueprints";
 }
 
 function loadAiCollapsed() {
@@ -2257,6 +2276,10 @@ function updateSidebarTabs() {
   if (hideBtn) {
     hideBtn.hidden = !autoActive;
   }
+  const hideBlueprintsBtn = $("hideBlueprintsToggleBtn");
+  if (hideBlueprintsBtn) {
+    hideBlueprintsBtn.hidden = !autoActive;
+  }
   updateAutomationPanels();
 }
 
@@ -2323,6 +2346,11 @@ function updateEntityUi() {
     createPrompt.placeholder = isAutomation()
       ? "e.g. When sleep_time turns on, remind me to set an alarm..."
       : "e.g. A script that sets movie lighting and turns on the TV...";
+  }
+
+  const openInHaBtn = $("openInHaBtn");
+  if (openInHaBtn) {
+    openInHaBtn.textContent = isAutomation() ? "Open in HA" : "Open script in HA";
   }
 
   if (!state.activeId) {
@@ -3698,6 +3726,8 @@ function setButtons(enabled) {
     const el = $(id);
     if (el) el.disabled = !allowActions;
   });
+  const openInHaBtn = $("openInHaBtn");
+  if (openInHaBtn) openInHaBtn.disabled = !enabled;
   const toggleBtn = $("toggleEnableBtn");
   if (toggleBtn) {
     toggleBtn.disabled = !allowActions || !isAutomation() || state.compareTarget !== "current";
@@ -3735,7 +3765,7 @@ function updateArchitectActionState() {
     return;
   }
 
-  planBtns.forEach((btn) => (btn.disabled = combineMode || !hasPrompt));
+  planBtns.forEach((btn) => (btn.disabled = !hasPrompt));
   finalizeBtns.forEach((btn) => {
     btn.hidden = false;
     btn.disabled = combineMode ? false : !(hasConv || hasPrompt);
@@ -3824,6 +3854,39 @@ function isAutomationDisabled(objOrState) {
     if (objOrState.initial_state === false) return true;
   }
   return false;
+}
+
+function isBlueprintAutomation(item) {
+  if (!item || typeof item !== "object") return false;
+  if (item.is_blueprint === true) return true;
+  if (item.blueprint === true) return true;
+  const useBlueprint = item.use_blueprint;
+  return Boolean(useBlueprint && typeof useBlueprint === "object");
+}
+
+function getCurrentHaEditorTargetId() {
+  const raw = String(state.active?.ha_id || state.activeId || "").trim();
+  if (!raw) return "";
+  if (isAutomation() && raw.startsWith("automation.")) return raw.slice("automation.".length);
+  if (!isAutomation() && raw.startsWith("script.")) return raw.slice("script.".length);
+  return raw;
+}
+
+function openCurrentInHaEditor() {
+  if (!state.activeId) {
+    toast(`Select a ${entityLabel()} first.`);
+    return;
+  }
+  const targetId = getCurrentHaEditorTargetId();
+  if (!targetId) {
+    toast("Unable to determine Home Assistant editor link.");
+    return;
+  }
+  const base = window.location.origin || "";
+  const path = isAutomation()
+    ? `/config/automation/edit/${encodeURIComponent(targetId)}`
+    : `/config/script/edit/${encodeURIComponent(targetId)}`;
+  window.open(`${base}${path}`, "_blank", "noopener,noreferrer");
 }
 
 function updateEnableButtonFromState(stateValue) {
@@ -4618,11 +4681,16 @@ async function createNewFromAiPrompt() {
 async function aiArchitectChat() {
   const prompt = $("aiPrompt").value.trim();
   if (!prompt) return toast("Write a prompt first.");
+  const combineMode = isCombineModeActive();
+  const combineIds = combineMode ? getCombineSelectionIds() : [];
+  if (combineMode && combineIds.length < 2) {
+    return toast("Select at least two automations to combine.");
+  }
   if (shouldRememberPrompt(prompt)) {
     openKbSyncModal({ prefill: prompt });
   }
 
-  if (state.activeId) {
+  if (!combineMode && state.activeId) {
     const localApplied = await tryLocalEdit(prompt);
     if (localApplied) {
       syncPromptInputs("", "main");
@@ -4642,12 +4710,15 @@ async function aiArchitectChat() {
     const body = {
       text: prompt,
       conversation_id: state.architectConversationId,
-      mode: state.activeId ? "edit" : "create",
-      entity_type: state.entityType,
-      entity_id: state.activeId || null,
+      mode: combineMode ? "combine" : (state.activeId ? "edit" : "create"),
+      entity_type: combineMode ? "automation" : state.entityType,
+      entity_id: combineMode ? null : (state.activeId || null),
       save_entity_hint: true,
     };
-    if (state.activeId && !state.architectContextSent) {
+    if (combineMode) {
+      body.combine_automation_ids = combineIds;
+    }
+    if (!combineMode && state.activeId && !state.architectContextSent) {
       body.automation_id = state.activeId;
       body.current_yaml = getCurrentDraftText();
       body.include_context = true;
@@ -4686,20 +4757,18 @@ async function aiArchitectChat() {
 
 async function aiArchitectFinalize(options = {}) {
   const { forcePrompt = false } = options;
-  const mode = state.activeId ? "edit" : "create";
+  const combineMode = isCombineModeActive();
+  const combineIds = combineMode ? getCombineSelectionIds() : [];
+  const mode = combineMode ? "combine" : (state.activeId ? "edit" : "create");
   const prompt = $("aiPrompt")?.value?.trim() || "";
   const historyStart = state.aiHistory.length;
   let handoffTimer = null;
 
-  if (isCombineModeActive()) {
-    await combineSelectedAutomations({
-      adjustments: prompt,
-      clearPrompt: true,
-    });
-    return;
+  if (combineMode && combineIds.length < 2) {
+    return toast("Select at least two automations to combine.");
   }
 
-  if (forcePrompt && !prompt) {
+  if (forcePrompt && !prompt && !state.architectConversationId) {
     return toast("Write a prompt first.");
   }
   if (!state.architectConversationId && !prompt) {
@@ -4707,17 +4776,20 @@ async function aiArchitectFinalize(options = {}) {
   }
 
   const ok = await openConfirmModal({
-    title: "Finalize and build",
+    title: combineMode ? "Finalize and combine" : "Finalize and build",
     subtitle: "Send the Architect plan to the Builder.",
-    message: mode === "edit"
+    message: combineMode
+      ? `Finalize and combine ${combineIds.length} selected automations? Redundant source automations will be disabled.`
+      : mode === "edit"
       ? `Finalize and build updates to this ${entityLabel()}?`
       : `Finalize and build a new ${entityLabel()}?`,
-    confirmText: "Build now",
+    confirmText: combineMode ? "Combine now" : "Build now",
+    confirmClass: combineMode ? "danger" : "",
   });
   if (!ok) return;
 
   try {
-    if (forcePrompt) {
+    if (forcePrompt && !combineMode) {
       state.architectConversationId = null;
       state.architectContextSent = false;
     }
@@ -4734,14 +4806,18 @@ async function aiArchitectFinalize(options = {}) {
     const body = {
       conversation_id: state.architectConversationId,
       mode,
-      entity_type: state.entityType,
-      entity_id: state.activeId || null,
-      automation_id: state.activeId || null,
+      entity_type: combineMode ? "automation" : state.entityType,
+      entity_id: combineMode ? null : (state.activeId || null),
+      automation_id: combineMode ? null : (state.activeId || null),
     };
+    if (combineMode) {
+      body.combine_automation_ids = combineIds;
+      body.disable_redundant = true;
+    }
     if (prompt) {
       body.text = prompt;
     }
-    if (state.activeId) {
+    if (!combineMode && state.activeId) {
       body.current_yaml = getCurrentDraftText();
       body.include_context = true;
     }
@@ -4759,7 +4835,43 @@ async function aiArchitectFinalize(options = {}) {
     handleCapabilitiesUpdated(out);
     appendAgentStatus(out, aiOutputAppend, "aiStatus", "Agent");
 
-    if (mode === "edit") {
+    if (combineMode) {
+      const createdId = out?.automation_id || out?.entity_id || null;
+      const disabled = Array.isArray(out?.disabled_automations) ? out.disabled_automations : [];
+      const disableFailed = Array.isArray(out?.disable_failed) ? out.disable_failed : [];
+      aiOutputAppend(
+        `Combined ${combineIds.length} automations${createdId ? ` into ${createdId}` : ""}.`,
+        "assistant"
+      );
+      if (disabled.length) {
+        log(`Disabled redundant automations: ${disabled.join(", ")}`);
+      }
+      if (disableFailed.length) {
+        const detail = disableFailed
+          .map((item) => `${item?.id || "unknown"} (${item?.detail || "failed"})`)
+          .join(", ");
+        log(`Some automations could not be disabled: ${detail}`);
+      }
+      clearCombineSelection();
+      clearAiPrompts();
+      if (createdId) {
+        await attachConversationHistory(
+          createdId,
+          "automation",
+          state.architectConversationId,
+          state.aiHistory
+        );
+      }
+      await saveCapabilitiesFromHistory(state.aiHistory, createdId, "automation");
+      await loadList();
+      if (settings.autoOpenNew && createdId) {
+        await openAutomation(createdId);
+      }
+      if (out?.yaml) {
+        await maybePromptMissingCapabilities(out.yaml);
+      }
+      toast("Combine complete.");
+    } else if (mode === "edit") {
       if (out.yaml) {
         if (state.compareTarget !== "current") setCompareTarget("current");
         state.previousSavedYaml = state.originalYaml;
@@ -4880,10 +4992,20 @@ function wireUI() {
   if (scriptTab) scriptTab.onclick = () => setEntityType("script");
   const combineBtn = $("combineBtn");
   if (combineBtn) {
-    combineBtn.onclick = () => combineSelectedAutomations({
-      adjustments: ($("aiPrompt")?.value || "").trim(),
-      clearPrompt: true,
-    });
+    combineBtn.onclick = () => {
+      const prompt = ($("aiPrompt")?.value || "").trim();
+      if (prompt) {
+        aiImprove();
+        return;
+      }
+      if (state.architectConversationId) {
+        aiFinalizeWithPrompt();
+        return;
+      }
+      const promptEl = $("aiPrompt");
+      if (promptEl) promptEl.focus();
+      toast("Add combine notes, then click Plan changes.");
+    };
   }
   syncCombineButton();
 
@@ -4985,6 +5107,8 @@ function wireUI() {
     await navigator.clipboard.writeText(getCurrentDraftText());
     toast("Copied.");
   };
+  const openInHaBtn = $("openInHaBtn");
+  if (openInHaBtn) openInHaBtn.onclick = () => openCurrentInHaEditor();
   const toggleEnableBtn = $("toggleEnableBtn");
   if (toggleEnableBtn) toggleEnableBtn.onclick = () => toggleAutomationEnabled();
 
@@ -5055,6 +5179,16 @@ function wireUI() {
       settings.hideDisabled = !settings.hideDisabled;
       localStorage.setItem("ui_settings", JSON.stringify(settings));
       syncHideDisabledToggle();
+      renderList();
+    });
+  }
+  const hideBlueprintsToggleBtn = $("hideBlueprintsToggleBtn");
+  if (hideBlueprintsToggleBtn) {
+    syncHideBlueprintsToggle();
+    hideBlueprintsToggleBtn.addEventListener("click", () => {
+      settings.hideBlueprints = !settings.hideBlueprints;
+      localStorage.setItem("ui_settings", JSON.stringify(settings));
+      syncHideBlueprintsToggle();
       renderList();
     });
   }
