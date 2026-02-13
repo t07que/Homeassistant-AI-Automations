@@ -22,6 +22,13 @@ function entityEndpoint() {
   return isAutomation() ? "/api/automations" : "/api/scripts";
 }
 
+function updateSearchPlaceholder() {
+  const search = $("searchInput");
+  if (!search) return;
+  const scope = settings.searchEntityIds ? "alias/desc/id/entity" : "alias/desc/id";
+  search.placeholder = `Search ${entityLabelPlural()} (${scope})...`;
+}
+
 const state = {
   q: "",
   list: [],
@@ -71,6 +78,9 @@ const state = {
   createArchitectConversationId: null,
   combineSelectionIds: [],
   usageSnapshot: null,
+  usageRunning: null,
+  usageRuns: [],
+  usageRunSeq: 0,
 };
 
 // Temporary safety switches for remote access issues.
@@ -87,6 +97,7 @@ const DEFAULT_SETTINGS = {
   compactList: false,
   hideDisabled: false,
   hideBlueprints: false,
+  searchEntityIds: false,
   autoOpenNew: true,
   filePath: "",
   invertPromptEnter: false,
@@ -251,29 +262,118 @@ function formatUsageEvent(ev, fallbackCurrency = "GBP") {
   const hasConvertedCost = Number.isFinite(Number(ev?.cost));
   const currency = String(ev?.currency || (hasConvertedCost ? fallbackCurrency : "USD") || "GBP").toUpperCase();
   const amount = hasConvertedCost ? Number(ev?.cost) : Number(ev?.cost_usd) || 0;
-  const cost = formatMoney(amount, currency);
+  const cost = usageCostText(amount, currency);
   return `${name} (${model}): ${promptTokens} in + ${completionTokens} out = ${totalTokens} tokens (~${cost})`;
+}
+
+function normalizeUsageCurrency(value, fallback = "GBP") {
+  const code = String(value || fallback || "GBP").trim().toUpperCase();
+  if (!code) return "GBP";
+  if (code === "MIXED" || code === "MIX") return "MIXED";
+  return code;
+}
+
+function usageCostText(amount, currency = "GBP") {
+  const code = normalizeUsageCurrency(currency, "GBP");
+  const value = Number.isFinite(Number(amount)) ? Number(amount) : 0;
+  if (code === "MIXED") return `${value.toFixed(value >= 1 ? 2 : 5)} (mixed currency)`;
+  return formatMoney(value, code);
+}
+
+function usageTotalFrom(events, total) {
+  const list = Array.isArray(events) ? events : [];
+  const sum = (key) => list.reduce((acc, ev) => acc + (Number.isFinite(Number(ev?.[key])) ? Number(ev[key]) : 0), 0);
+  const promptTokens = Number.isFinite(Number(total?.prompt_tokens)) ? Number(total.prompt_tokens) : sum("prompt_tokens");
+  const completionTokens = Number.isFinite(Number(total?.completion_tokens)) ? Number(total.completion_tokens) : sum("completion_tokens");
+  const totalTokens = Number.isFinite(Number(total?.total_tokens))
+    ? Number(total.total_tokens)
+    : promptTokens + completionTokens;
+  const hasCost = Number.isFinite(Number(total?.cost));
+  const hasCostUsd = Number.isFinite(Number(total?.cost_usd));
+  let currency = normalizeUsageCurrency(total?.currency || settings.usageCurrency || "GBP");
+  let amount = hasCost
+    ? Number(total.cost)
+    : hasCostUsd
+      ? Number(total.cost_usd)
+      : list.reduce((acc, ev) => {
+          if (Number.isFinite(Number(ev?.cost))) return acc + Number(ev.cost);
+          if (Number.isFinite(Number(ev?.cost_usd))) return acc + Number(ev.cost_usd);
+          return acc;
+        }, 0);
+
+  if (list.length) {
+    const currencies = [...new Set(list.map((ev) => normalizeUsageCurrency(ev?.currency || currency)).filter(Boolean))];
+    if (currency === "MIXED" || currencies.length > 1) currency = "MIXED";
+  }
+
+  return {
+    prompt_tokens: Math.max(0, Math.round(promptTokens)),
+    completion_tokens: Math.max(0, Math.round(completionTokens)),
+    total_tokens: Math.max(0, Math.round(totalTokens)),
+    currency,
+    cost: Number.isFinite(Number(amount)) ? Number(amount) : 0,
+  };
+}
+
+function mergeUsageCurrency(baseCurrency, nextCurrency) {
+  const a = normalizeUsageCurrency(baseCurrency || "GBP");
+  const b = normalizeUsageCurrency(nextCurrency || a || "GBP");
+  if (a === "MIXED" || b === "MIXED") return "MIXED";
+  return a === b ? a : "MIXED";
+}
+
+function recordUsageRun(total, label = "Prompt") {
+  if (!total || (!total.total_tokens && !total.cost)) return;
+  const runLabel = String(label || "Prompt");
+  const run = {
+    idx: ++state.usageRunSeq,
+    label: runLabel,
+    at: Date.now(),
+    promptTokens: Number(total.prompt_tokens) || 0,
+    completionTokens: Number(total.completion_tokens) || 0,
+    totalTokens: Number(total.total_tokens) || 0,
+    currency: normalizeUsageCurrency(total.currency || settings.usageCurrency || "GBP"),
+    amount: Number(total.cost) || 0,
+  };
+  if (!state.usageRunning) {
+    state.usageRunning = {
+      prompts: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      currency: run.currency,
+      amount: 0,
+    };
+  }
+  state.usageRunning.prompts += 1;
+  state.usageRunning.promptTokens += run.promptTokens;
+  state.usageRunning.completionTokens += run.completionTokens;
+  state.usageRunning.totalTokens += run.totalTokens;
+  state.usageRunning.currency = mergeUsageCurrency(state.usageRunning.currency, run.currency);
+  state.usageRunning.amount += run.amount;
+
+  if (!Array.isArray(state.usageRuns)) state.usageRuns = [];
+  state.usageRuns.unshift(run);
+  if (state.usageRuns.length > 40) state.usageRuns = state.usageRuns.slice(0, 40);
 }
 
 function appendUsage(out, label = "Usage") {
   const events = Array.isArray(out?.usage_events) ? out.usage_events : [];
   const total = out?.usage_total;
   if (!events.length && !total) return;
-  updateUsageSnapshot(events, total, label);
-  const fallbackCurrency = String(total?.currency || settings.usageCurrency || "GBP").toUpperCase();
-  events.forEach((ev) => log(`${label}: ${formatUsageEvent(ev, fallbackCurrency)}`));
-  if (total) {
-    const promptTokens = Number(total?.prompt_tokens) || 0;
-    const completionTokens = Number(total?.completion_tokens) || 0;
-    const totalTokens = Number.isFinite(Number(total?.total_tokens))
-      ? Number(total?.total_tokens)
-      : promptTokens + completionTokens;
-    const hasConvertedCost = Number.isFinite(Number(total?.cost));
-    const currency = String(total?.currency || (hasConvertedCost ? fallbackCurrency : "USD")).toUpperCase();
-    const amount = hasConvertedCost ? Number(total?.cost) : Number(total?.cost_usd) || 0;
-    const cost = currency === "MIXED" ? `${amount.toFixed(5)} (mixed currency)` : formatMoney(amount, currency);
-    log(`${label} total: ${promptTokens} in + ${completionTokens} out = ${totalTokens} tokens (~${cost})`);
-  }
+  const usageTotal = usageTotalFrom(events, total);
+  const usageLabel = String(label || "Prompt");
+  updateUsageSnapshot(events, usageTotal, usageLabel);
+  recordUsageRun(usageTotal, usageLabel);
+  const fallbackCurrency = normalizeUsageCurrency(usageTotal?.currency || settings.usageCurrency || "GBP");
+  events.forEach((ev) => log(`${usageLabel}: ${formatUsageEvent(ev, fallbackCurrency)}`));
+  const promptTokens = Number(usageTotal?.prompt_tokens) || 0;
+  const completionTokens = Number(usageTotal?.completion_tokens) || 0;
+  const totalTokens = Number(usageTotal?.total_tokens) || 0;
+  const currency = normalizeUsageCurrency(usageTotal?.currency || settings.usageCurrency || "GBP");
+  const amount = Number(usageTotal?.cost) || 0;
+  const cost = usageCostText(amount, currency);
+  log(`${usageLabel} total: ${promptTokens} in + ${completionTokens} out = ${totalTokens} tokens (~${cost})`);
 }
 
 function updateUsageSnapshot(events, total, label = "Usage") {
@@ -295,9 +395,8 @@ function updateUsageSnapshot(events, total, label = "Usage") {
   const totalTokens = Number.isFinite(Number(total?.total_tokens))
     ? Number(total?.total_tokens)
     : promptTokens + completionTokens;
-  const hasConvertedCost = Number.isFinite(Number(total?.cost));
-  const currency = String(total?.currency || settings.usageCurrency || "GBP").toUpperCase();
-  const amount = hasConvertedCost ? Number(total?.cost) : Number(total?.cost_usd) || 0;
+  const currency = normalizeUsageCurrency(total?.currency || settings.usageCurrency || "GBP");
+  const amount = Number.isFinite(Number(total?.cost)) ? Number(total?.cost) : 0;
 
   state.usageSnapshot = {
     label: String(label || "Usage"),
@@ -984,6 +1083,20 @@ function getAgentSecret() {
   return injected;
 }
 
+function usageLabelFromPath(path) {
+  const p = String(path || "").toLowerCase();
+  if (!p) return "Prompt";
+  if (p.includes("/api/architect/finalize")) return "Architect finalize";
+  if (p.includes("/api/architect/chat")) return "Architect chat";
+  if (p.includes("/api/automations/combine")) return "Combine automations";
+  if (p.includes("/api/capabilities/sync")) return "KB sync";
+  if (p.includes("/api/capabilities/learn")) return "KB learn";
+  if (p.includes("/ha/automation-builder")) return "Builder";
+  if (p.includes("/ai_update")) return "AI edit";
+  if (p.includes("/conversation/process")) return "Conversation prompt";
+  return "Prompt";
+}
+
 async function api(path, opts = {}) {
   const req = { ...opts, headers: { ...(opts.headers || {}) } };
   // FastAPI param x_ha_agent_secret accepts header "X-HA-AGENT-SECRET"
@@ -1021,7 +1134,7 @@ async function api(path, opts = {}) {
     const ct = res.headers.get("content-type") || "";
     if (ct.includes("application/json")) {
       const data = await res.json();
-      appendUsage(data);
+      appendUsage(data, usageLabelFromPath(path));
       return data;
     }
     return await res.text();
@@ -1417,28 +1530,56 @@ function renderUsageChart() {
   const box = $("usageChart");
   if (!box) return;
   const snap = state.usageSnapshot;
-  if (!snap || !Array.isArray(snap.events) || !snap.events.length) {
+  const running = state.usageRunning;
+  const runs = Array.isArray(state.usageRuns) ? state.usageRuns : [];
+  const hasLatest = Boolean(snap && Array.isArray(snap.events) && snap.events.length);
+  const hasRunning = Boolean(running && Number(running.prompts) > 0);
+  if (!hasLatest && !hasRunning && !runs.length) {
     box.innerHTML = `<div class="usage-empty">No token usage yet.</div>`;
     return;
   }
-  const maxTokens = Math.max(1, ...snap.events.map((ev) => ev.totalTokens || 0));
-  const totalTokens = Number(snap.totalTokens) || 0;
-  const cost = formatMoney(Number(snap.amount) || 0, snap.currency || "GBP");
-  const stamp = new Date(snap.at || Date.now()).toLocaleTimeString();
-  let html = `<div class="usage-meta">${escapeHtml(snap.label)} - ${stamp}<br>Total: ${totalTokens} tokens (~${escapeHtml(cost)})</div>`;
-  snap.events.slice(0, 8).forEach((ev) => {
-    const pct = Math.max(4, Math.round((ev.totalTokens / maxTokens) * 100));
-    const name = ev.model ? `${ev.name} (${ev.model})` : ev.name;
-    html += `
-      <div class="usage-row">
-        <div class="usage-label">
-          <span class="usage-label-name">${escapeHtml(name)}</span>
-          <span class="usage-label-value">${ev.totalTokens}</span>
+  let html = "";
+  if (hasRunning) {
+    const totalTokens = Number(running.totalTokens) || 0;
+    const cost = usageCostText(Number(running.amount) || 0, running.currency || settings.usageCurrency || "GBP");
+    const prompts = Number(running.prompts) || 0;
+    html += `<div class="usage-running">Running total (${prompts} prompt${prompts === 1 ? "" : "s"}): ${totalTokens} tokens (~${escapeHtml(cost)})</div>`;
+  }
+  if (hasLatest) {
+    const maxTokens = Math.max(1, ...snap.events.map((ev) => ev.totalTokens || 0));
+    const totalTokens = Number(snap.totalTokens) || 0;
+    const cost = usageCostText(Number(snap.amount) || 0, snap.currency || settings.usageCurrency || "GBP");
+    const stamp = new Date(snap.at || Date.now()).toLocaleTimeString();
+    html += `<div class="usage-meta">Latest: ${escapeHtml(snap.label)} - ${stamp}<br>Total: ${totalTokens} tokens (~${escapeHtml(cost)})</div>`;
+    snap.events.slice(0, 8).forEach((ev) => {
+      const pct = Math.max(4, Math.round((ev.totalTokens / maxTokens) * 100));
+      const name = ev.model ? `${ev.name} (${ev.model})` : ev.name;
+      html += `
+        <div class="usage-row">
+          <div class="usage-label">
+            <span class="usage-label-name">${escapeHtml(name)}</span>
+            <span class="usage-label-value">${ev.totalTokens}</span>
+          </div>
+          <div class="usage-bar"><span class="usage-bar-fill" style="width:${pct}%"></span></div>
         </div>
-        <div class="usage-bar"><span class="usage-bar-fill" style="width:${pct}%"></span></div>
-      </div>
-    `;
-  });
+      `;
+    });
+  }
+  if (runs.length) {
+    html += `<div class="usage-history-title">Prompt costs</div>`;
+    html += `<div class="usage-run-list">`;
+    runs.slice(0, 12).forEach((run) => {
+      const stamp = new Date(run.at || Date.now()).toLocaleTimeString();
+      const cost = usageCostText(Number(run.amount) || 0, run.currency || settings.usageCurrency || "GBP");
+      html += `
+        <div class="usage-run">
+          <span class="usage-run-name">#${Number(run.idx) || 0} ${escapeHtml(run.label || "Prompt")}</span>
+          <span class="usage-run-meta">${Number(run.totalTokens) || 0} tok · ${escapeHtml(cost)} · ${stamp}</span>
+        </div>
+      `;
+    });
+    html += `</div>`;
+  }
   box.innerHTML = html;
 }
 
@@ -1464,6 +1605,7 @@ function loadSettings() {
   settings.allowAiDiff = Boolean(settings.allowAiDiff);
   settings.hideDisabled = Boolean(settings.hideDisabled);
   settings.hideBlueprints = Boolean(settings.hideBlueprints);
+  settings.searchEntityIds = Boolean(settings.searchEntityIds);
   const conf = parseFloat(settings.helperMinConfidence);
   settings.helperMinConfidence = Number.isFinite(conf) ? Math.max(0, Math.min(1, conf)) : DEFAULT_SETTINGS.helperMinConfidence;
   settings.usageCurrency = String(settings.usageCurrency || DEFAULT_SETTINGS.usageCurrency).toUpperCase();
@@ -1475,6 +1617,7 @@ function applySettings() {
   document.body.classList.toggle("compact-list", Boolean(settings.compactList));
   syncHideDisabledToggle();
   syncHideBlueprintsToggle();
+  syncSearchEntityIdsToggle();
 }
 
 function syncHideDisabledToggle() {
@@ -1493,6 +1636,16 @@ function syncHideBlueprintsToggle() {
   btn.classList.toggle("toggle-active", active);
   btn.setAttribute("aria-pressed", active ? "true" : "false");
   btn.textContent = active ? "Show blueprints" : "Hide blueprints";
+}
+
+function syncSearchEntityIdsToggle() {
+  const btn = $("searchEntityIdsToggleBtn");
+  if (!btn) return;
+  const active = Boolean(settings.searchEntityIds);
+  btn.classList.toggle("toggle-active", active);
+  btn.setAttribute("aria-pressed", active ? "true" : "false");
+  btn.textContent = active ? "Searching entity IDs" : "Search entity IDs";
+  updateSearchPlaceholder();
 }
 
 function loadAiCollapsed() {
@@ -2437,8 +2590,7 @@ function getMinSize(el, axis) {
 }
 
 function updateEntityUi() {
-  const search = $("searchInput");
-  if (search) search.placeholder = `Search ${entityLabelPlural()} (alias/desc/id)...`;
+  updateSearchPlaceholder();
 
   const newBtn = $("newEntityBtn");
   if (newBtn) {
@@ -4141,8 +4293,11 @@ function setDirty(isDirty) {
 
 async function loadList() {
   const requestId = ++listRequestSeq;
-  const q = encodeURIComponent(state.q || "");
-  const url = `${entityEndpoint()}?q=${q}`;
+  const params = new URLSearchParams();
+  if (state.q) params.set("q", state.q);
+  if (settings.searchEntityIds) params.set("search_entity_ids", "1");
+  const query = params.toString();
+  const url = query ? `${entityEndpoint()}?${query}` : entityEndpoint();
 
   log("Loading list...");
   try {
@@ -5345,6 +5500,17 @@ function wireUI() {
       localStorage.setItem("ui_settings", JSON.stringify(settings));
       syncHideBlueprintsToggle();
       renderList();
+    });
+  }
+  const searchEntityIdsToggleBtn = $("searchEntityIdsToggleBtn");
+  if (searchEntityIdsToggleBtn) {
+    syncSearchEntityIdsToggle();
+    searchEntityIdsToggleBtn.addEventListener("click", () => {
+      settings.searchEntityIds = !settings.searchEntityIds;
+      localStorage.setItem("ui_settings", JSON.stringify(settings));
+      syncSearchEntityIdsToggle();
+      if (!debouncedLoadList) debouncedLoadList = debounce(loadList, SEARCH_DEBOUNCE_MS);
+      debouncedLoadList();
     });
   }
 

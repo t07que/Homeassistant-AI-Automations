@@ -4148,7 +4148,8 @@ def api_capabilities_learn(body: Dict[str, Any] = Body(default={})):
 # ----------------------------
 @app.get("/api/automations")
 def api_list_automations(
-    q: str = Query(default="", description="Optional search query (alias/description/id)")
+    q: str = Query(default="", description="Optional search query (alias/description/id)"),
+    search_entity_ids: bool = Query(default=False, description="Also search entity IDs referenced in automation YAML"),
 ):
     qn = (q or "").strip().lower()
 
@@ -4166,6 +4167,19 @@ def api_list_automations(
         if not aid:
             continue
         alias = a.get("alias") or aid
+        description = a.get("description") or ""
+        if qn:
+            basic_match = (
+                qn in aid.lower()
+                or qn in str(alias).lower()
+                or qn in str(description).lower()
+            )
+            if not basic_match and search_entity_ids:
+                entity_refs: set = set()
+                _collect_entity_ids(a, entity_refs)
+                basic_match = any(qn in str(eid).lower() for eid in entity_refs if eid)
+            if not basic_match:
+                continue
         state_info = state_by_id.get(aid) or state_by_slug.get(_slug(alias))
         use_blueprint = a.get("use_blueprint")
         blueprint_path = ""
@@ -4174,7 +4188,7 @@ def api_list_automations(
         items.append({
             "id": aid,
             "alias": alias,
-            "description": a.get("description") or "",
+            "description": description,
             "enabled": a.get("enabled"),
             "initial_state": a.get("initial_state"),
             "is_blueprint": bool(use_blueprint),
@@ -4183,14 +4197,6 @@ def api_list_automations(
             "entity_id": state_info.get("entity_id") if state_info else None,
             "source": "ha_file",
         })
-
-    if qn:
-        items = [
-            it for it in items
-            if qn in str(it.get("id","")).lower()
-            or qn in str(it.get("alias","")).lower()
-            or qn in str(it.get("description","")).lower()
-        ]
 
     items.sort(key=lambda x: str(x.get("alias") or ""))
     return {"items": items}
@@ -4782,7 +4788,8 @@ def api_update_version_meta(
 # ----------------------------
 @app.get("/api/scripts")
 def api_list_scripts(
-    q: str = Query(default="", description="Optional search query (alias/description/id)")
+    q: str = Query(default="", description="Optional search query (alias/description/id)"),
+    search_entity_ids: bool = Query(default=False, description="Also search entity IDs referenced in script YAML"),
 ):
     qn = (q or "").strip().lower()
 
@@ -4795,20 +4802,26 @@ def api_list_scripts(
     for sid, cfg in scripts.items():
         if not isinstance(cfg, dict):
             continue
+        alias = cfg.get("alias") or sid
+        description = cfg.get("description") or ""
+        if qn:
+            basic_match = (
+                qn in str(sid).lower()
+                or qn in str(alias).lower()
+                or qn in str(description).lower()
+            )
+            if not basic_match and search_entity_ids:
+                entity_refs: set = set()
+                _collect_entity_ids(cfg, entity_refs)
+                basic_match = any(qn in str(eid).lower() for eid in entity_refs if eid)
+            if not basic_match:
+                continue
         items.append({
             "id": sid,
-            "alias": cfg.get("alias") or sid,
-            "description": cfg.get("description") or "",
+            "alias": alias,
+            "description": description,
             "source": "ha_file",
         })
-
-    if qn:
-        items = [
-            it for it in items
-            if qn in str(it.get("id","")).lower()
-            or qn in str(it.get("alias","")).lower()
-            or qn in str(it.get("description","")).lower()
-        ]
 
     items.sort(key=lambda x: str(x.get("alias") or ""))
     return {"items": items}
